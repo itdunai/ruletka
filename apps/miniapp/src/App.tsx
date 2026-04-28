@@ -198,13 +198,31 @@ export function App() {
     const webApp = window.Telegram?.WebApp;
     webApp?.ready?.();
     const tgUser = webApp?.initDataUnsafe?.user;
-    if (tgUser?.id) {
-      setTelegramId(String(tgUser.id));
-      setUsername(tgUser.username ?? "");
-      setFirstName(tgUser.first_name ?? "");
-      setLastName(tgUser.last_name ?? "");
+    // Fallback: Telegram can pass tgWebAppData in URL when SDK object is delayed/unavailable.
+    const searchParams = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.startsWith("#") ? window.location.hash.slice(1) : window.location.hash);
+    const tgWebAppDataRaw = searchParams.get("tgWebAppData") ?? hashParams.get("tgWebAppData") ?? "";
+    const decodedInitData = tgWebAppDataRaw ? decodeURIComponent(tgWebAppDataRaw) : "";
+    let parsedUserFromInitData: TelegramUser | null = null;
+    if (decodedInitData) {
+      const initDataParams = new URLSearchParams(decodedInitData);
+      const rawUser = initDataParams.get("user");
+      if (rawUser) {
+        try {
+          parsedUserFromInitData = JSON.parse(rawUser) as TelegramUser;
+        } catch {
+          parsedUserFromInitData = null;
+        }
+      }
     }
-    setInitData(webApp?.initData ?? "");
+    const effectiveUser = tgUser ?? parsedUserFromInitData;
+    if (effectiveUser?.id) {
+      setTelegramId(String(effectiveUser.id));
+      setUsername(effectiveUser.username ?? "");
+      setFirstName(effectiveUser.first_name ?? "");
+      setLastName(effectiveUser.last_name ?? "");
+    }
+    setInitData(webApp?.initData || decodedInitData || "");
     setAuthReady(true);
   }, []);
 
@@ -214,7 +232,8 @@ export function App() {
     async function authAndLoad() {
       setError("");
       if (!initData && !telegramId) {
-        throw new Error("Откройте mini app через кнопку бота в Telegram (/start).");
+        setError("Не удалось получить данные Telegram. Откройте mini app через кнопку бота и обновите экран.");
+        return;
       }
       const response = await fetch(`${API_BASE_URL}/auth/telegram`, {
         method: "POST",
