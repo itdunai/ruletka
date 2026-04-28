@@ -1,0 +1,16 @@
+{
+  "name": "ruletka-loc",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace @ruletka/api",
+    "dev:bot": "npm run dev --workspace @ruletka/bot",
+    "dev:miniapp": "npm run dev --workspace @ruletka/miniapp",
+    "build": "npm run build --workspaces --if-present",
+    "prisma:generate": "npx prisma generate --schema prisma/schema.prisma",
+    "prisma:migrate": "npx prisma migrate dev --schema prisma/schema.prisma"
+  }
+}

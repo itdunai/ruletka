@@ -1,0 +1,285 @@
+
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--bg:#1a1c18;--bg2:#222520;--bg3:#2a2d26;--green:#a8d832;--text:#fff;--text2:#888a82;--border:rgba(168,216,50,0.15)}
+.app{background:var(--bg);border-radius:28px;width:360px;margin:0 auto;font-family:system-ui,sans-serif;overflow:hidden;border:1px solid var(--border);display:flex;flex-direction:column;min-height:660px}
+.screen{display:none;flex-direction:column;flex:1}
+.screen.active{display:flex}
+.topbar{padding:14px 18px 10px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);flex-shrink:0}
+.topbar-left{font-size:12px;color:var(--text2);line-height:1.6}
+.topbar-left span{color:var(--green)}
+.prizes-btn{background:var(--green);border:none;border-radius:20px;padding:7px 14px;color:#1a1c18;font-size:12px;font-weight:700;cursor:pointer;text-transform:uppercase}
+.slot-section{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px 0 8px;gap:16px}
+.slot-outer{width:360px;height:190px;position:relative;overflow:hidden;flex-shrink:0}
+.fade-l{position:absolute;left:0;top:0;bottom:0;width:80px;background:linear-gradient(to right,var(--bg) 50%,transparent);z-index:5;pointer-events:none}
+.fade-r{position:absolute;right:0;top:0;bottom:0;width:80px;background:linear-gradient(to left,var(--bg) 50%,transparent);z-index:5;pointer-events:none}
+.glow-c{position:absolute;left:180px;top:95px;transform:translate(-50%,-50%);width:150px;height:150px;border-radius:50%;background:radial-gradient(circle,rgba(168,216,50,0.13) 0%,transparent 70%);z-index:4;pointer-events:none}
+.center-frame{position:absolute;left:180px;top:95px;transform:translate(-50%,-50%);width:140px;height:176px;border:2px solid var(--green);border-radius:18px;z-index:6;pointer-events:none}
+.arr-t{position:absolute;left:50%;top:-13px;transform:translateX(-50%);width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;border-top:14px solid var(--green)}
+.arr-b{position:absolute;left:50%;bottom:-13px;transform:translateX(-50%);width:0;height:0;border-left:10px solid transparent;border-right:10px solid transparent;border-bottom:14px solid var(--green)}
+.track{display:flex;align-items:center;position:absolute;top:10px;left:0;will-change:transform}
+.scard{width:130px;height:170px;border-radius:16px;background:var(--bg2);border:1px solid rgba(168,216,50,0.1);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;flex-shrink:0;margin-right:12px}
+.cn{font-size:40px;font-weight:900;color:var(--green);font-style:italic;line-height:1}
+.cn.sm{font-size:26px}
+.ci{font-size:42px;line-height:1}
+.ct{background:rgba(168,216,50,0.1);border:1px solid rgba(168,216,50,0.25);border-radius:10px;padding:4px 10px;font-size:10px;color:var(--green);font-weight:700;text-transform:uppercase;letter-spacing:0.5px;text-align:center;max-width:110px}
+.timer-row{display:none;flex-direction:column;align-items:center;gap:4px}
+.timer-row.show{display:flex}
+.tlabel{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px}
+.tpill{background:var(--bg3);border:1px solid var(--border);border-radius:20px;padding:7px 18px;font-size:14px;color:var(--text);font-weight:700;letter-spacing:1px}
+.spin-btn{width:324px;padding:18px;background:var(--green);border:none;border-radius:16px;color:#1a1c18;font-size:17px;font-weight:800;cursor:pointer;text-transform:uppercase;letter-spacing:1px;transition:transform 0.1s;flex-shrink:0}
+.spin-btn:active{transform:scale(0.98)}
+.spin-btn.used{background:var(--bg3);color:var(--text2);cursor:not-allowed;border:1px solid var(--border)}
+.tnote{font-size:11px;color:var(--text2);text-align:center;padding:10px 16px 16px;line-height:1.5;flex-shrink:0}
+.tnote a{color:var(--green);cursor:pointer;text-decoration:none}
+.result-type{font-size:18px;font-weight:800;color:var(--green);text-transform:uppercase;letter-spacing:2px;text-align:center;padding:14px 0 0}
+.rbody{flex:1;display:flex;flex-direction:column;align-items:center;padding:12px 24px;gap:12px}
+.rvisual{width:100%;height:200px;display:flex;align-items:center;justify-content:center;position:relative}
+.rglow{position:absolute;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,rgba(168,216,50,0.2) 0%,transparent 70%)}
+.rdeco{position:absolute;color:var(--green);font-size:14px;opacity:0.6}
+.rcard{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:8px}
+.rnum{font-size:80px;font-weight:900;color:var(--green);font-style:italic;line-height:1}
+.rnum.sm{font-size:52px}
+.rtag{background:#1a1c18;border:1px solid var(--green);border-radius:20px;padding:6px 18px;font-size:13px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:1px}
+.ibox{width:100%;background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:16px;font-size:13px;color:var(--text2);line-height:1.9}
+.ibox span{color:var(--green);font-weight:700}
+.sbtn{width:100%;padding:17px;background:var(--green);border:none;border-radius:16px;color:#1a1c18;font-size:16px;font-weight:800;cursor:pointer;text-transform:uppercase;letter-spacing:1px}
+.lbtn{background:none;border:none;color:var(--green);font-size:13px;cursor:pointer;padding:2px}
+.phdr{padding:14px 18px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}
+.bbtn{background:none;border:none;color:var(--text2);font-size:14px;cursor:pointer}
+.pttl{font-size:15px;font-weight:700;color:var(--green);text-transform:uppercase;letter-spacing:1px}
+.pbody{flex:1;overflow-y:auto;padding:16px 18px;font-size:13px;color:var(--text2);line-height:1.9}
+.pbody h3{color:var(--green);font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin:14px 0 6px}
+.pbody ul{padding-left:14px}
+.pbody li{margin-bottom:4px}
+.pbody strong{color:var(--text)}
+.warn{color:#e05050;font-size:12px;font-weight:700;padding:10px;background:rgba(224,80,80,0.1);border-radius:10px;border:1px solid rgba(224,80,80,0.2);margin-top:12px}
+.plist{display:flex;flex-direction:column;gap:10px}
+.pcitem{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between}
+.pcl{display:flex;flex-direction:column;gap:3px}
+.pcdate{font-size:11px;color:var(--text2)}
+.pcname{font-size:14px;font-weight:700;color:var(--text);text-transform:uppercase}
+.pcexp{font-size:11px;color:var(--green)}
+.pcval{font-size:20px;font-weight:900;color:var(--green);font-style:italic}
+</style>
+
+<div class="app">
+  <div class="screen active" id="s-main">
+    <div class="topbar">
+      <div class="topbar-left">Username: <span>@maxchad</span><br>ID: 522734778</div>
+      <button class="prizes-btn" onclick="go('s-myprizes')">Мои призы</button>
+    </div>
+    <div class="slot-section">
+      <div class="timer-row" id="timer-row">
+        <div class="tlabel">До следующей попытки:</div>
+        <div class="tpill" id="timer-val">6д 5ч 40мин</div>
+      </div>
+      <div class="slot-outer">
+        <div class="fade-l"></div>
+        <div class="fade-r"></div>
+        <div class="glow-c"></div>
+        <div class="center-frame"><div class="arr-t"></div><div class="arr-b"></div></div>
+        <div class="track" id="track"></div>
+      </div>
+      <button class="spin-btn" id="spin-btn" onclick="startSpin()">Крутить</button>
+    </div>
+    <div class="tnote">Нажимая на кнопку, вы соглашаетесь с <a onclick="go('s-terms')">Условиями акции</a></div>
+  </div>
+
+  <div class="screen" id="s-result">
+    <div class="topbar">
+      <div class="topbar-left">Username: <span>@maxchad</span><br>ID: 522734778</div>
+      <button class="prizes-btn" onclick="go('s-myprizes')">Мои призы</button>
+    </div>
+    <div class="result-type" id="r-type">Скидка</div>
+    <div class="rbody">
+      <div class="rvisual">
+        <div class="rglow"></div>
+        <div class="rdeco" style="top:20px;left:40px">✦</div>
+        <div class="rdeco" style="top:50px;right:35px;font-size:10px">✦</div>
+        <div class="rdeco" style="bottom:30px;left:60px;font-size:18px">✦</div>
+        <div class="rdeco" style="bottom:50px;right:50px">✦</div>
+        <div class="rcard">
+          <div class="rnum" id="r-num">5%</div>
+          <div class="rtag" id="r-tag">скидка</div>
+        </div>
+      </div>
+      <div class="ibox" id="r-info">
+        <div>Забрать приз в течение <span>3 дней</span></div>
+        <div>Сегодня: <span id="r-today"></span></div>
+        <div>Забрать до: <span id="r-expire"></span></div>
+        <div style="margin-top:6px">Перешлите сообщение: <span>@snus_irk_operator</span></div>
+      </div>
+      <button class="sbtn" onclick="alert('Отправлено @snus_irk_operator!')">Отправить оператору</button>
+      <button class="lbtn" onclick="go('s-prizeterm')">Условия получения приза</button>
+    </div>
+  </div>
+
+  <div class="screen" id="s-terms">
+    <div class="phdr"><button class="bbtn" onclick="go('s-main')">← Назад</button><div class="pttl">Условия акции</div></div>
+    <div class="pbody">
+      <h3>Правила</h3>
+      <ul><li>Подпишитесь на канал магазина</li><li>Нажмите <strong>"Крутить"</strong></li><li><strong>Приз действует 3 дня</strong></li><li>Покажите сообщение оператору</li><li><strong>1 попытка в неделю</strong></li></ul>
+      <h3>Призы</h3>
+      <ul><li>Скидка 5% — 25%</li><li>Скидка 10% — 15%</li><li>Скидка 15% — 8%</li><li>Бесплатная доставка — 20%</li><li>Позиция до 800₽ — 7%</li><li>Депозит 500₽ — 10%</li><li>Депозит 1000₽ — 5%</li><li>Депозит 5000₽ — 1%</li><li>Не повезло — 9%</li></ul>
+    </div>
+  </div>
+
+  <div class="screen" id="s-prizeterm">
+    <div class="phdr"><button class="bbtn" onclick="go('s-result')">← Назад</button><div class="pttl">Условия получения</div></div>
+    <div class="pbody">
+      <h3>Как получить</h3>
+      <ul><li>Перешлите сообщение <strong>@snus_irk_operator</strong> до заказа</li><li>Срок — <strong>3 дня</strong>, одна попытка</li><li>Только <strong>владелец аккаунта</strong></li><li>Покажите переписку курьеру</li><li>После получения нажмите <strong>"Заказ получен"</strong></li></ul>
+      <h3>О призах</h3>
+      <ul><li>Скидки — кроме pod-систем и акционных</li><li>Доставка — по городу, некоторые районы исключены</li><li>Позиция до 800₽ — одна позиция, без доплаты</li></ul>
+      <div class="warn">НЕ НАЖИМАЙТЕ "ЗАКАЗ ПОЛУЧЕН" ДО ПОЛУЧЕНИЯ — ПРИЗ СГОРИТ!</div>
+    </div>
+  </div>
+
+  <div class="screen" id="s-myprizes">
+    <div class="phdr"><button class="bbtn" onclick="go('s-main')">← Назад</button><div class="pttl">Мои призы</div></div>
+    <div class="pbody"><div class="plist" id="prizes-list"><div style="text-align:center;color:var(--text2);padding:40px 0;font-size:14px">Пока нет призов.<br>Покрутите колесо!</div></div></div>
+  </div>
+</div>
+
+<script>
+const PRIZES=[
+  {num:'5%',   tag:'скидка',              label:'Скидка',    w:25},
+  {num:'10%',  tag:'скидка',              label:'Скидка',    w:15},
+  {num:'15%',  tag:'скидка',              label:'Скидка',    w:8},
+  {num:'',     tag:'бесплатная доставка', label:'Доставка',  w:20, icon:'🚀'},
+  {num:'',     tag:'позиция до 800 ₽',   label:'Подарок',   w:7,  icon:'🎁'},
+  {num:'500',  tag:'депозит',             label:'Депозит',   w:10},
+  {num:'1000', tag:'депозит',             label:'Депозит',   w:5},
+  {num:'5000', tag:'депозит',             label:'Депозит',   w:1},
+  {num:'',     tag:'в другой раз!',       label:'Не повезло',w:9,  icon:'😔'},
+];
+
+const CW=130, GAP=12, STEP=CW+GAP;
+const N=PRIZES.length;
+const REPS=10;
+const CARD_H=170;
+const SLOT_H=190;
+const TOP=(SLOT_H-CARD_H)/2;
+
+let offset=0, idleRaf=null, spinning=false, hasSpun=false, myPrizes=[];
+
+function go(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));document.getElementById(id).classList.add('active')}
+
+function makeCard(p){
+  const d=document.createElement('div');
+  d.className='scard';
+  if(p.icon) d.innerHTML=`<div class="ci">${p.icon}</div><div class="ct">${p.tag}</div>`;
+  else d.innerHTML=`<div class="cn${p.num.length>=4?' sm':''}">${p.num}</div><div class="ct">${p.tag}</div>`;
+  return d;
+}
+
+function buildTrack(){
+  const track=document.getElementById('track');
+  track.innerHTML='';
+  track.style.top=TOP+'px';
+  for(let r=0;r<REPS;r++) PRIZES.forEach(p=>track.appendChild(makeCard(p)));
+}
+
+function applyOffset(){
+  document.getElementById('track').style.transform=`translateX(${-offset}px)`;
+}
+
+function offsetForCard(globalIdx){
+  return globalIdx*STEP - 180 + CW/2;
+}
+
+const IDLE_SPEED=0.45;
+function idleLoop(){
+  if(spinning) return;
+  offset+=IDLE_SPEED;
+  if(offset > N*STEP*(REPS-3)) offset -= N*STEP*(REPS/2);
+  applyOffset();
+  idleRaf=requestAnimationFrame(idleLoop);
+}
+
+function pickPrize(){
+  let r=Math.random()*100;
+  for(let i=0;i<N;i++){r-=PRIZES[i].w;if(r<=0)return i;}
+  return 0;
+}
+
+function easeOut(t){return 1-Math.pow(1-t,3)}
+
+function startSpin(){
+  if(spinning||hasSpun) return;
+  spinning=true;
+  cancelAnimationFrame(idleRaf);
+  const prizeIdx=pickPrize();
+  const rounds=6;
+  const targetGlobalIdx=rounds*N+prizeIdx;
+  const targetOffset=offsetForCard(targetGlobalIdx);
+  const startOff=offset;
+  const dist=targetOffset-startOff+N*STEP*Math.ceil((startOff-targetOffset+N*STEP*rounds)/(N*STEP));
+  const dur=4000;
+  let t0=null;
+  function frame(ts){
+    if(!t0) t0=ts;
+    const el=Math.min((ts-t0)/dur,1);
+    let e;
+    if(el<0.2) e=(el/0.2)*0.5;
+    else e=0.5+easeOut((el-0.2)/0.8)*0.5;
+    offset=startOff+dist*e;
+    applyOffset();
+    if(el<1) requestAnimationFrame(frame);
+    else{offset=startOff+dist;applyOffset();spinning=false;hasSpun=true;onResult(prizeIdx);}
+  }
+  requestAnimationFrame(frame);
+}
+
+function fmt(d){return d.toLocaleDateString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric'})+' '+d.toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}
+
+function onResult(idx){
+  const p=PRIZES[idx];
+  document.getElementById('spin-btn').classList.add('used');
+  document.getElementById('spin-btn').textContent='Уже крутили сегодня';
+  document.getElementById('timer-row').classList.add('show');
+  startTimer();
+  document.getElementById('r-type').textContent=p.label;
+  const rn=document.getElementById('r-num');
+  if(p.icon){rn.textContent=p.icon;rn.className='rnum';}
+  else{rn.textContent=p.num;rn.className='rnum'+(p.num.length>=4?' sm':'');}
+  document.getElementById('r-tag').textContent=p.tag;
+  const now=new Date(),exp=new Date(now.getTime()+3*24*3600*1000);
+  document.getElementById('r-today').textContent=fmt(now);
+  document.getElementById('r-expire').textContent=fmt(exp);
+  if(p.label==='Не повезло'){
+    document.getElementById('r-info').innerHTML='<div style="text-align:center;padding:12px 0;font-size:15px;color:var(--text2)">В этот раз не повезло 😔<br>Попробуйте через неделю!</div>';
+    document.querySelector('.sbtn').style.display='none';
+    document.querySelector('.lbtn').style.display='none';
+  } else {
+    document.querySelector('.sbtn').style.display='block';
+    document.querySelector('.lbtn').style.display='block';
+    myPrizes.unshift({name:p.label+(p.num?' '+p.num:''),expire:exp});
+    updateMyPrizes();
+  }
+  setTimeout(()=>go('s-result'),500);
+}
+
+function updateMyPrizes(){
+  const list=document.getElementById('prizes-list');
+  if(!myPrizes.length){list.innerHTML='<div style="text-align:center;color:var(--text2);padding:40px 0;font-size:14px">Пока нет призов.<br>Покрутите колесо!</div>';return;}
+  const now=new Date();
+  list.innerHTML=myPrizes.map(p=>`<div class="pcitem"><div class="pcl"><div class="pcdate">${fmt(now)}</div><div class="pcname">${p.name}</div><div class="pcexp">До ${fmt(p.expire)}</div></div><div class="pcval">${p.name.match(/\d+%/)?p.name.match(/\d+%/)[0]:p.name.match(/\d+/)?p.name.match(/\d+/)[0]+'₽':'🎁'}</div></div>`).join('');
+}
+
+function startTimer(){
+  let s=7*24*3600;
+  const el=document.getElementById('timer-val');
+  const t=setInterval(()=>{
+    const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);
+    el.textContent=d+'д '+h+'ч '+m+'мин';
+    s--;if(s<0)clearInterval(t);
+  },1000);
+}
+
+buildTrack();
+offset=offsetForCard(N*2);
+applyOffset();
+requestAnimationFrame(idleLoop);
+</script>

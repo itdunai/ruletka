@@ -1,0 +1,11 @@
+node_modules
+dist
+.env
+.env.*
+!.env.example
+coverage
+.DS_Store
+*.log
+apps/*/dist
+apps/*/node_modules
+prisma/dev.db

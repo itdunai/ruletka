@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum PrizeType {
+  discount
+  delivery
+  gift
+  deposit
+  none
+}
+
+enum WinStatus {
+  active
+  claimed
+  expired
+  cancelled
+}
+
+enum ShopNotificationStatus {
+  sent
+  failed
+}
+
+enum ShopNotificationAction {
+  send_to_shop
+  claim
+  reject
+}
+
+model User {
+  id         String   @id @default(uuid())
+  telegramId BigInt   @unique
+  username   String?
+  firstName  String?
+  lastName   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  spins      Spin[]
+  wins       Win[]
+}
+
+model Channel {
+  id             String  @id @default(uuid())
+  telegramChatId String  @unique
+  title          String
+  required       Boolean @default(true)
+  active         Boolean @default(true)
+}
+
+model Prize {
+  id        String    @id @default(uuid())
+  title     String
+  type      PrizeType
+  value     String?
+  imageUrl  String?
+  weight    Decimal   @db.Decimal(10, 2)
+  isActive  Boolean   @default(true)
+  stock     Int?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  spins     Spin[]
+  wins      Win[]
+}
+
+model Spin {
+  id        String   @id @default(uuid())
+  userId    String
+  spinAt    DateTime @default(now())
+  prizeId   String
+  requestIp String?
+  userAgent String?
+  user      User     @relation(fields: [userId], references: [id])
+  prize     Prize    @relation(fields: [prizeId], references: [id])
+  win       Win?
+}
+
+model Win {
+  id         String    @id @default(uuid())
+  userId     String
+  spinId     String    @unique
+  prizeId    String
+  status     WinStatus @default(active)
+  promoCode  String?   @unique
+  expiresAt  DateTime
+  claimedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  user       User      @relation(fields: [userId], references: [id])
+  spin       Spin      @relation(fields: [spinId], references: [id])
+  prize      Prize     @relation(fields: [prizeId], references: [id])
+  notifications ShopNotification[]
+}
+
+model ShopNotification {
+  id           String                 @id @default(uuid())
+  winId         String
+  action        ShopNotificationAction
+  status        ShopNotificationStatus
+  sentToChatId  String?
+  messageId     String?
+  errorText     String?
+  createdAt     DateTime              @default(now())
+  win           Win                   @relation(fields: [winId], references: [id])
+}
+
+model AppSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

@@ -1,0 +1,872 @@
+import "dotenv/config";
+import fs from "node:fs/promises";
+import path from "node:path";
+import Fastify from "fastify";
+import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
+import sensible from "@fastify/sensible";
+import fastifyStatic from "@fastify/static";
+import { z } from "zod";
+import { Prisma, PrizeType, ShopNotificationAction, ShopNotificationStatus, WinStatus } from "@prisma/client";
+import { getDefaultPrizesWithoutId, pickWeightedPrize, type Prize } from "./prizes.js";
+import { prisma } from "./db.js";
+import { validateTelegramInitData } from "./telegram.js";
+
+const SPIN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+const WIN_EXPIRATION_MS = 3 * 24 * 60 * 60 * 1000;
+const EXPIRATION_JOB_INTERVAL_MS = Number(process.env.EXPIRATION_JOB_INTERVAL_MS ?? 60_000);
+const adminToken = process.env.ADMIN_TOKEN ?? "";
+const operatorToken = process.env.OPERATOR_TOKEN ?? "";
+const shopChatId = process.env.SHOP_CHAT_ID ?? "";
+const botToken = process.env.BOT_TOKEN ?? process.env.TELEGRAM_BOT_TOKEN ?? "";
+const requiredChannels = (process.env.REQUIRED_CHANNELS ?? "")
+  .split(",")
+  .map((channel) => channel.trim())
+  .filter(Boolean);
+const uploadDir = path.resolve(process.cwd(), process.env.UPLOAD_DIR ?? "uploads");
+const uploadBaseUrl = process.env.UPLOAD_BASE_URL ?? "";
+const CONTENT_KEYS = {
+  promoTerms: "content.promo_terms",
+  prizeTerms: "content.prize_terms"
+} as const;
+const DEFAULT_PROMO_TERMS = [
+  "<h3>Правила</h3>",
+  "<ul>",
+  "<li>Подпишитесь на каналы магазина</li>",
+  "<li>Нажмите \"Крутить\"</li>",
+  "<li>Приз действует 3 дня</li>",
+  "<li>Покажите сообщение оператору</li>",
+  "<li>1 попытка в неделю</li>",
+  "</ul>"
+].join("");
+const DEFAULT_PRIZE_TERMS = [
+  "<h3>Как получить</h3>",
+  "<ul>",
+  "<li>Отправьте приз оператору до заказа</li>",
+  "<li>Срок действия: 3 дня</li>",
+  "<li>Только для владельца аккаунта</li>",
+  "</ul>"
+].join("");
+
+const app = Fastify({ logger: true });
+await app.register(cors, { origin: true });
+await app.register(sensible);
+await app.register(multipart);
+await fs.mkdir(uploadDir, { recursive: true });
+await app.register(fastifyStatic, {
+  root: uploadDir,
+  prefix: "/uploads/"
+});
+
+const authSchema = z.object({
+  telegramId: z.number().int().positive().optional(),
+  username: z.string().optional().default(""),
+  initData: z.string().optional().default(""),
+  firstName: z.string().optional(),
+  lastName: z.string().optional()
+});
+
+const spinSchema = z.object({
+  telegramId: z.number().int().positive()
+});
+
+const adminPrizeCreateSchema = z.object({
+  title: z.string().min(1),
+  type: z.enum(["discount", "delivery", "gift", "deposit", "none"]),
+  value: z.string().nullable().optional(),
+  imageUrl: z.string().url().nullable().optional(),
+  weight: z.number().positive(),
+  isActive: z.boolean().optional().default(true),
+  stock: z.number().int().nonnegative().nullable().optional()
+});
+
+const adminPrizeUpdateSchema = adminPrizeCreateSchema.partial();
+const operatorWinActionSchema = z.object({
+  reason: z.string().max(500).optional()
+});
+const adminContentUpdateSchema = z.object({
+  promoTerms: z.string().min(1),
+  prizeTerms: z.string().min(1)
+});
+
+function toDbPrizeType(type: Prize["type"]): PrizeType {
+  switch (type) {
+    case "discount":
+      return PrizeType.discount;
+    case "delivery":
+      return PrizeType.delivery;
+    case "gift":
+      return PrizeType.gift;
+    case "deposit":
+      return PrizeType.deposit;
+    case "none":
+      return PrizeType.none;
+    default:
+      return PrizeType.none;
+  }
+}
+
+function toApiPrizeType(type: PrizeType): Prize["type"] {
+  switch (type) {
+    case PrizeType.discount:
+      return "discount";
+    case PrizeType.delivery:
+      return "delivery";
+    case PrizeType.gift:
+      return "gift";
+    case PrizeType.deposit:
+      return "deposit";
+    case PrizeType.none:
+      return "none";
+    default:
+      return "none";
+  }
+}
+
+async function ensureDefaultPrizes() {
+  const count = await prisma.prize.count();
+  if (count > 0) return;
+
+  const defaults = getDefaultPrizesWithoutId();
+  await prisma.prize.createMany({
+    data: defaults.map((prize) => ({
+      title: prize.title,
+      type: toDbPrizeType(prize.type),
+      value: prize.value,
+      imageUrl: prize.imageUrl,
+      weight: new Prisma.Decimal(prize.weight),
+      isActive: prize.isActive
+    }))
+  });
+}
+
+async function ensureDefaultContentSettings() {
+  await prisma.appSetting.upsert({
+    where: { key: CONTENT_KEYS.promoTerms },
+    update: {},
+    create: { key: CONTENT_KEYS.promoTerms, value: DEFAULT_PROMO_TERMS }
+  });
+  await prisma.appSetting.upsert({
+    where: { key: CONTENT_KEYS.prizeTerms },
+    update: {},
+    create: { key: CONTENT_KEYS.prizeTerms, value: DEFAULT_PRIZE_TERMS }
+  });
+}
+
+async function getContentSettings() {
+  await ensureDefaultContentSettings();
+  const records = await prisma.appSetting.findMany({
+    where: {
+      key: { in: [CONTENT_KEYS.promoTerms, CONTENT_KEYS.prizeTerms] }
+    }
+  });
+  const promoTerms = records.find((record) => record.key === CONTENT_KEYS.promoTerms)?.value ?? DEFAULT_PROMO_TERMS;
+  const prizeTerms = records.find((record) => record.key === CONTENT_KEYS.prizeTerms)?.value ?? DEFAULT_PRIZE_TERMS;
+  return { promoTerms, prizeTerms };
+}
+
+async function ensureUser(telegramId: number, username?: string) {
+  const telegramIdBigInt = BigInt(telegramId);
+  return prisma.user.upsert({
+    where: { telegramId: telegramIdBigInt },
+    create: {
+      telegramId: telegramIdBigInt,
+      username: username || null
+    },
+    update: {
+      username: username || null
+    }
+  });
+}
+
+function getNextSpinAt(lastSpinAt: Date | null): Date | null {
+  if (!lastSpinAt) return null;
+  return new Date(lastSpinAt.getTime() + SPIN_COOLDOWN_MS);
+}
+
+function canSpin(lastSpinAt: Date | null): boolean {
+  if (!lastSpinAt) return true;
+  return Date.now() - lastSpinAt.getTime() >= SPIN_COOLDOWN_MS;
+}
+
+function requireAdmin(request: { headers: Record<string, unknown> }) {
+  if (!adminToken) {
+    throw app.httpErrors.internalServerError("ADMIN_TOKEN is not configured");
+  }
+  const candidate = request.headers["x-admin-token"];
+  if (candidate !== adminToken) {
+    throw app.httpErrors.unauthorized("Invalid admin token");
+  }
+}
+
+function requireOperator(request: { headers: Record<string, unknown> }) {
+  if (!operatorToken) {
+    throw app.httpErrors.internalServerError("OPERATOR_TOKEN is not configured");
+  }
+  const candidate = request.headers["x-operator-token"];
+  if (candidate !== operatorToken) {
+    throw app.httpErrors.unauthorized("Invalid operator token");
+  }
+}
+
+async function assertActivePrizePool(tx: Prisma.TransactionClient) {
+  const count = await tx.prize.count({
+    where: {
+      isActive: true,
+      weight: { gt: 0 },
+      OR: [{ stock: null }, { stock: { gt: 0 } }]
+    }
+  });
+  if (count === 0) {
+    throw app.httpErrors.badRequest("At least one active prize with positive weight is required");
+  }
+}
+
+async function createNotificationLog(input: {
+  winId: string;
+  action: ShopNotificationAction;
+  status: ShopNotificationStatus;
+  sentToChatId?: string;
+  messageId?: string;
+  errorText?: string;
+}) {
+  await prisma.shopNotification.create({
+    data: {
+      winId: input.winId,
+      action: input.action,
+      status: input.status,
+      sentToChatId: input.sentToChatId ?? null,
+      messageId: input.messageId ?? null,
+      errorText: input.errorText ?? null
+    }
+  });
+}
+
+async function expireActiveWins() {
+  const now = new Date();
+  const result = await prisma.win.updateMany({
+    where: {
+      status: WinStatus.active,
+      expiresAt: { lte: now }
+    },
+    data: { status: WinStatus.expired }
+  });
+  if (result.count > 0) {
+    app.log.info({ expiredCount: result.count }, "Expired stale wins");
+  }
+}
+
+async function isUserSubscribedToRequiredChannels(telegramId: number): Promise<boolean> {
+  if (requiredChannels.length === 0) {
+    return true;
+  }
+  if (!botToken) {
+    throw app.httpErrors.internalServerError("BOT_TOKEN is required for subscription checks");
+  }
+
+  for (const channel of requiredChannels) {
+    const response = await fetch(`https://api.telegram.org/bot${botToken}/getChatMember`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: channel,
+        user_id: telegramId
+      })
+    });
+
+    const data = (await response.json()) as {
+      ok?: boolean;
+      description?: string;
+      result?: { status?: string };
+    };
+
+    if (!response.ok || !data.ok) {
+      app.log.warn({ channel, description: data.description }, "Failed to check channel membership");
+      return false;
+    }
+
+    const status = data.result?.status;
+    const allowed = new Set(["member", "administrator", "creator"]);
+    if (!status || !allowed.has(status)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function mapPrizeToApi(prize: {
+  id: string;
+  title: string;
+  type: PrizeType;
+  value: string | null;
+  weight: Prisma.Decimal;
+  imageUrl: string | null;
+  isActive: boolean;
+  stock: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    id: prize.id,
+    title: prize.title,
+    type: toApiPrizeType(prize.type),
+    value: prize.value,
+    weight: Number(prize.weight),
+    imageUrl: prize.imageUrl,
+    isActive: prize.isActive,
+    stock: prize.stock,
+    createdAt: prize.createdAt,
+    updatedAt: prize.updatedAt
+  };
+}
+
+app.get("/health", async () => ({ ok: true }));
+
+app.get("/content/texts", async () => {
+  const content = await getContentSettings();
+  return content;
+});
+
+app.get("/admin/prizes", async (request) => {
+  requireAdmin(request);
+  await ensureDefaultPrizes();
+  const prizes = await prisma.prize.findMany({ orderBy: { createdAt: "asc" } });
+  return { items: prizes.map(mapPrizeToApi) };
+});
+
+app.post("/admin/prizes", async (request) => {
+  requireAdmin(request);
+  const parsed = adminPrizeCreateSchema.safeParse(request.body);
+  if (!parsed.success) {
+    throw app.httpErrors.badRequest("Invalid prize payload");
+  }
+
+  const created = await prisma.$transaction(async (tx) => {
+    const createdPrize = await tx.prize.create({
+      data: {
+        title: parsed.data.title,
+        type: toDbPrizeType(parsed.data.type),
+        value: parsed.data.value ?? null,
+        imageUrl: parsed.data.imageUrl ?? null,
+        weight: new Prisma.Decimal(parsed.data.weight),
+        isActive: parsed.data.isActive,
+        stock: parsed.data.stock ?? null
+      }
+    });
+    await assertActivePrizePool(tx);
+    return createdPrize;
+  });
+
+  return { item: mapPrizeToApi(created) };
+});
+
+app.post("/admin/prizes/:prizeId/image-upload", async (request) => {
+  requireAdmin(request);
+  const params = z.object({ prizeId: z.string().min(1) }).parse(request.params);
+  const file = await request.file();
+  if (!file) {
+    throw app.httpErrors.badRequest("File is required");
+  }
+  if (!file.mimetype.startsWith("image/")) {
+    throw app.httpErrors.badRequest("Only image files are allowed");
+  }
+
+  const ext = file.filename.includes(".") ? file.filename.split(".").pop() : "bin";
+  const safeExt = (ext || "bin").replace(/[^a-zA-Z0-9]/g, "").toLowerCase() || "bin";
+  const storedFileName = `${params.prizeId}-${Date.now()}.${safeExt}`;
+  const storedPath = path.join(uploadDir, storedFileName);
+  await file.toBuffer().then((buffer) => fs.writeFile(storedPath, buffer));
+
+  const publicPath = `/uploads/${storedFileName}`;
+  const imageUrl = uploadBaseUrl ? `${uploadBaseUrl.replace(/\/$/, "")}${publicPath}` : publicPath;
+
+  const prize = await prisma.prize.update({
+    where: { id: params.prizeId },
+    data: { imageUrl }
+  });
+  return { item: mapPrizeToApi(prize) };
+});
+
+app.delete("/admin/prizes/:prizeId/image", async (request) => {
+  requireAdmin(request);
+  const params = z.object({ prizeId: z.string().min(1) }).parse(request.params);
+  const current = await prisma.prize.findUnique({ where: { id: params.prizeId } });
+  if (!current) {
+    throw app.httpErrors.notFound("Prize not found");
+  }
+
+  if (current.imageUrl?.startsWith("/uploads/")) {
+    const fileName = current.imageUrl.replace("/uploads/", "");
+    const filePath = path.join(uploadDir, fileName);
+    try {
+      await fs.unlink(filePath);
+    } catch {
+      // Ignore filesystem cleanup errors to not block image detach.
+    }
+  }
+
+  const prize = await prisma.prize.update({
+    where: { id: params.prizeId },
+    data: { imageUrl: null }
+  });
+  return { item: mapPrizeToApi(prize) };
+});
+
+app.patch("/admin/prizes/:prizeId", async (request) => {
+  requireAdmin(request);
+  const params = z.object({ prizeId: z.string().min(1) }).parse(request.params);
+  const parsed = adminPrizeUpdateSchema.safeParse(request.body);
+  if (!parsed.success) {
+    throw app.httpErrors.badRequest("Invalid prize payload");
+  }
+
+  const data: {
+    title?: string;
+    type?: PrizeType;
+    value?: string | null;
+    imageUrl?: string | null;
+    weight?: Prisma.Decimal;
+    isActive?: boolean;
+    stock?: number | null;
+  } = {};
+  if (parsed.data.title !== undefined) data.title = parsed.data.title;
+  if (parsed.data.type !== undefined) data.type = toDbPrizeType(parsed.data.type);
+  if (parsed.data.value !== undefined) data.value = parsed.data.value;
+  if (parsed.data.imageUrl !== undefined) data.imageUrl = parsed.data.imageUrl;
+  if (parsed.data.weight !== undefined) data.weight = new Prisma.Decimal(parsed.data.weight);
+  if (parsed.data.isActive !== undefined) data.isActive = parsed.data.isActive;
+  if (parsed.data.stock !== undefined) data.stock = parsed.data.stock;
+
+  const updated = await prisma.$transaction(async (tx) => {
+    const updatedPrize = await tx.prize.update({
+      where: { id: params.prizeId },
+      data
+    });
+    await assertActivePrizePool(tx);
+    return updatedPrize;
+  });
+  return { item: mapPrizeToApi(updated) };
+});
+
+app.delete("/admin/prizes/:prizeId", async (request) => {
+  requireAdmin(request);
+  const params = z.object({ prizeId: z.string().min(1) }).parse(request.params);
+  await prisma.$transaction(async (tx) => {
+    await tx.prize.delete({ where: { id: params.prizeId } });
+    await assertActivePrizePool(tx);
+  });
+  return { ok: true };
+});
+
+app.get("/admin/content/texts", async (request) => {
+  requireAdmin(request);
+  return getContentSettings();
+});
+
+app.patch("/admin/content/texts", async (request) => {
+  requireAdmin(request);
+  const parsed = adminContentUpdateSchema.safeParse(request.body);
+  if (!parsed.success) {
+    throw app.httpErrors.badRequest("Invalid content payload");
+  }
+
+  await prisma.$transaction([
+    prisma.appSetting.upsert({
+      where: { key: CONTENT_KEYS.promoTerms },
+      update: { value: parsed.data.promoTerms },
+      create: { key: CONTENT_KEYS.promoTerms, value: parsed.data.promoTerms }
+    }),
+    prisma.appSetting.upsert({
+      where: { key: CONTENT_KEYS.prizeTerms },
+      update: { value: parsed.data.prizeTerms },
+      create: { key: CONTENT_KEYS.prizeTerms, value: parsed.data.prizeTerms }
+    })
+  ]);
+
+  return { ok: true };
+});
+
+app.post("/auth/telegram", async (request) => {
+  const parsed = authSchema.safeParse(request.body);
+  if (!parsed.success) {
+    throw app.httpErrors.badRequest("Invalid auth payload");
+  }
+
+  // TODO: validate Telegram initData signature on production.
+  const authBotToken = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
+  const hasInitData = parsed.data.initData.trim().length > 0;
+
+  let telegramId = parsed.data.telegramId ?? 0;
+  let username = parsed.data.username;
+  let firstName = parsed.data.firstName;
+  let lastName = parsed.data.lastName;
+
+  if (hasInitData) {
+    if (!authBotToken) {
+      throw app.httpErrors.internalServerError("TELEGRAM_BOT_TOKEN is not configured");
+    }
+    const validated = validateTelegramInitData(parsed.data.initData, authBotToken);
+    if (!validated.user?.id) {
+      throw app.httpErrors.badRequest("initData has no user id");
+    }
+    telegramId = validated.user.id;
+    username = validated.user.username ?? username;
+    firstName = validated.user.first_name ?? firstName;
+    lastName = validated.user.last_name ?? lastName;
+  } else if (!telegramId) {
+    throw app.httpErrors.badRequest("telegramId is required when initData is missing");
+  }
+
+  await ensureDefaultPrizes();
+  const user = await prisma.user.upsert({
+    where: { telegramId: BigInt(telegramId) },
+    create: {
+      telegramId: BigInt(telegramId),
+      username: username || null,
+      firstName: firstName || null,
+      lastName: lastName || null
+    },
+    update: {
+      username: username || null,
+      firstName: firstName || null,
+      lastName: lastName || null
+    }
+  });
+  const lastSpin = await prisma.spin.findFirst({
+    where: { userId: user.id },
+    orderBy: { spinAt: "desc" }
+  });
+
+  return {
+    user: {
+      telegramId,
+      username,
+      firstName,
+      lastName
+    },
+    canSpin: canSpin(lastSpin?.spinAt ?? null),
+    nextSpinAt: getNextSpinAt(lastSpin?.spinAt ?? null)
+  };
+});
+
+app.get("/app/state/:telegramId", async (request) => {
+  const params = z.object({ telegramId: z.coerce.number().int().positive() }).parse(request.params);
+  await ensureDefaultPrizes();
+  const user = await ensureUser(params.telegramId);
+  const now = new Date();
+
+  await prisma.win.updateMany({
+    where: {
+      userId: user.id,
+      status: WinStatus.active,
+      expiresAt: { lte: now }
+    },
+    data: { status: WinStatus.expired }
+  });
+
+  const [lastSpin, wins, prizes] = await Promise.all([
+    prisma.spin.findFirst({
+      where: { userId: user.id },
+      orderBy: { spinAt: "desc" }
+    }),
+    prisma.win.findMany({
+      where: { userId: user.id },
+      include: { prize: true },
+      orderBy: { createdAt: "desc" }
+    }),
+    prisma.prize.findMany({
+      where: { isActive: true },
+      orderBy: { createdAt: "asc" }
+    })
+  ]);
+
+  return {
+    canSpin: canSpin(lastSpin?.spinAt ?? null),
+    nextSpinAt: getNextSpinAt(lastSpin?.spinAt ?? null),
+    wins: wins.map((win) => ({
+      id: win.id,
+      prizeId: win.prizeId,
+      prizeTitle: win.prize.title,
+      status: win.status,
+      expiresAt: win.expiresAt,
+      createdAt: win.createdAt
+    })),
+    prizesPreview: prizes.map((prize) => ({
+      id: prize.id,
+      title: prize.title,
+      type: toApiPrizeType(prize.type),
+      value: prize.value,
+      weight: Number(prize.weight),
+      imageUrl: prize.imageUrl,
+      isActive: prize.isActive
+    }))
+  };
+});
+
+app.post("/spin", async (request) => {
+  const parsed = spinSchema.safeParse(request.body);
+  if (!parsed.success) {
+    throw app.httpErrors.badRequest("Invalid spin payload");
+  }
+
+  await ensureDefaultPrizes();
+  const user = await ensureUser(parsed.data.telegramId);
+  const isSubscribed = await isUserSubscribedToRequiredChannels(parsed.data.telegramId);
+  if (!isSubscribed) {
+    throw app.httpErrors.forbidden("Subscription to required channels is missing");
+  }
+  const now = new Date();
+
+  await expireActiveWins();
+
+  const lastSpin = await prisma.spin.findFirst({
+    where: { userId: user.id },
+    orderBy: { spinAt: "desc" }
+  });
+
+  if (!canSpin(lastSpin?.spinAt ?? null)) {
+    throw app.httpErrors.tooManyRequests("Spin is available only once per week");
+  }
+
+  const dbPrizes = await prisma.prize.findMany({
+    where: {
+      isActive: true,
+      OR: [{ stock: null }, { stock: { gt: 0 } }]
+    },
+    orderBy: { createdAt: "asc" }
+  });
+
+  const prizesForPick: Prize[] = dbPrizes.map((prize) => ({
+    id: prize.id,
+    title: prize.title,
+    type: toApiPrizeType(prize.type),
+    value: prize.value,
+    weight: Number(prize.weight),
+    imageUrl: prize.imageUrl,
+    isActive: prize.isActive
+  }));
+
+  const prize = pickWeightedPrize(prizesForPick);
+  const expiresAt = new Date(now.getTime() + WIN_EXPIRATION_MS);
+
+  const spin = await prisma.spin.create({
+    data: {
+      userId: user.id,
+      prizeId: prize.id,
+      spinAt: now,
+      requestIp: request.ip,
+      userAgent: typeof request.headers["user-agent"] === "string" ? request.headers["user-agent"] : null
+    }
+  });
+
+  const win = await prisma.win.create({
+    data: {
+      userId: user.id,
+      spinId: spin.id,
+      prizeId: prize.id,
+      status: WinStatus.active,
+      expiresAt
+    }
+  });
+
+  const dbPrize = dbPrizes.find((item) => item.id === prize.id);
+  if (dbPrize?.stock && dbPrize.stock > 0) {
+    await prisma.prize.update({
+      where: { id: dbPrize.id },
+      data: { stock: dbPrize.stock - 1 }
+    });
+  }
+
+  return {
+    winId: win.id,
+    prize,
+    createdAt: now,
+    expiresAt,
+    nextSpinAt: getNextSpinAt(now)
+  };
+});
+
+app.post("/wins/:winId/send-to-shop", async (request) => {
+  const params = z.object({ winId: z.string().min(1) }).parse(request.params);
+  const body = z.object({ telegramId: z.number().int().positive() }).parse(request.body);
+  const user = await ensureUser(body.telegramId);
+  const win = await prisma.win.findFirst({
+    where: {
+      id: params.winId,
+      userId: user.id
+    }
+  });
+  if (!win) {
+    throw app.httpErrors.notFound("Win not found");
+  }
+  if (win.status !== WinStatus.active) {
+    throw app.httpErrors.badRequest("Win is not active");
+  }
+  if (win.expiresAt.getTime() <= Date.now()) {
+    await prisma.win.update({
+      where: { id: win.id },
+      data: { status: WinStatus.expired }
+    });
+    throw app.httpErrors.badRequest("Win is expired");
+  }
+
+  if (!botToken) {
+    throw app.httpErrors.internalServerError("BOT_TOKEN is not configured");
+  }
+  if (!shopChatId) {
+    throw app.httpErrors.internalServerError("SHOP_CHAT_ID is not configured");
+  }
+
+  const winWithPrize = await prisma.win.findUnique({
+    where: { id: win.id },
+    include: { prize: true, user: true }
+  });
+  if (!winWithPrize) {
+    throw app.httpErrors.notFound("Win not found");
+  }
+
+  const message = [
+    "Новый приз для обработки",
+    `Пользователь: @${winWithPrize.user.username ?? "no_username"} (id: ${winWithPrize.user.telegramId.toString()})`,
+    `Приз: ${winWithPrize.prize.title}`,
+    `Срок до: ${winWithPrize.expiresAt.toLocaleString("ru-RU")}`,
+    `Win ID: ${winWithPrize.id}`
+  ].join("\n");
+
+  const telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: shopChatId,
+      text: message
+    })
+  });
+  const telegramData = (await telegramResponse.json()) as {
+    ok?: boolean;
+    description?: string;
+    result?: { message_id?: number };
+  };
+  if (!telegramResponse.ok || !telegramData.ok) {
+    await createNotificationLog({
+      winId: win.id,
+      action: ShopNotificationAction.send_to_shop,
+      status: ShopNotificationStatus.failed,
+      sentToChatId: shopChatId,
+      errorText: telegramData.description ?? "unknown error"
+    });
+    throw app.httpErrors.badGateway(`Failed to send message to shop chat: ${telegramData.description ?? "unknown error"}`);
+  }
+
+  await createNotificationLog({
+    winId: win.id,
+    action: ShopNotificationAction.send_to_shop,
+    status: ShopNotificationStatus.sent,
+    sentToChatId: shopChatId,
+    messageId: telegramData.result?.message_id ? String(telegramData.result.message_id) : undefined
+  });
+
+  return { ok: true, message: "Prize sent to shop operator chat", messageId: telegramData.result?.message_id ?? null };
+});
+
+app.post("/operator/wins/:winId/claim", async (request) => {
+  requireOperator(request);
+  const params = z.object({ winId: z.string().min(1) }).parse(request.params);
+  const body = operatorWinActionSchema.parse(request.body ?? {});
+  const win = await prisma.win.findUnique({
+    where: { id: params.winId },
+    include: { prize: true, user: true }
+  });
+  if (!win) {
+    throw app.httpErrors.notFound("Win not found");
+  }
+  if (win.status !== WinStatus.active) {
+    throw app.httpErrors.badRequest("Only active win can be claimed");
+  }
+  if (win.expiresAt.getTime() <= Date.now()) {
+    await prisma.win.update({
+      where: { id: win.id },
+      data: { status: WinStatus.expired }
+    });
+    throw app.httpErrors.badRequest("Win is expired");
+  }
+
+  const updated = await prisma.win.update({
+    where: { id: win.id },
+    data: { status: WinStatus.claimed, claimedAt: new Date() }
+  });
+
+  await createNotificationLog({
+    winId: win.id,
+    action: ShopNotificationAction.claim,
+    status: ShopNotificationStatus.sent,
+    sentToChatId: shopChatId || undefined,
+    errorText: body.reason
+  });
+
+  return { ok: true, winId: updated.id, status: updated.status };
+});
+
+app.post("/operator/wins/:winId/reject", async (request) => {
+  requireOperator(request);
+  const params = z.object({ winId: z.string().min(1) }).parse(request.params);
+  const body = operatorWinActionSchema.parse(request.body ?? {});
+  const win = await prisma.win.findUnique({ where: { id: params.winId } });
+  if (!win) {
+    throw app.httpErrors.notFound("Win not found");
+  }
+  if (win.status !== WinStatus.active) {
+    throw app.httpErrors.badRequest("Only active win can be rejected");
+  }
+
+  const updated = await prisma.win.update({
+    where: { id: win.id },
+    data: { status: WinStatus.cancelled }
+  });
+
+  await createNotificationLog({
+    winId: win.id,
+    action: ShopNotificationAction.reject,
+    status: ShopNotificationStatus.sent,
+    sentToChatId: shopChatId || undefined,
+    errorText: body.reason
+  });
+
+  return { ok: true, winId: updated.id, status: updated.status };
+});
+
+app.get("/operator/wins/:winId/logs", async (request) => {
+  requireOperator(request);
+  const params = z.object({ winId: z.string().min(1) }).parse(request.params);
+  const logs = await prisma.shopNotification.findMany({
+    where: { winId: params.winId },
+    orderBy: { createdAt: "asc" }
+  });
+  return { items: logs };
+});
+
+const port = Number(process.env.API_PORT ?? 3001);
+const host = process.env.API_HOST ?? "0.0.0.0";
+const expirationTimer = setInterval(() => {
+  void expireActiveWins().catch((error) => app.log.error({ err: error }, "Expiration job failed"));
+}, EXPIRATION_JOB_INTERVAL_MS);
+
+app.listen({ port, host }).catch((error) => {
+  app.log.error(error);
+  process.exit(1);
+});
+
+void expireActiveWins().catch((error) => app.log.error({ err: error }, "Initial expiration sync failed"));
+
+const shutdown = async (signal: string) => {
+  clearInterval(expirationTimer);
+  app.log.info({ signal }, "Shutting down API");
+  await prisma.$disconnect();
+  process.exit(0);
+};
+
+process.once("SIGINT", () => {
+  void shutdown("SIGINT");
+});
+process.once("SIGTERM", () => {
+  void shutdown("SIGTERM");
+});
