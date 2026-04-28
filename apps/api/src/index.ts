@@ -8,6 +8,9 @@ import sensible from "@fastify/sensible";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
 import { Prisma, PrizeType, ShopNotificationAction, ShopNotificationStatus, WinStatus } from "@prisma/client";
+import jwt from "jsonwebtoken";
+import sanitizeHtml from "sanitize-html";
+import { fileTypeFromBuffer } from "file-type";
 import { getDefaultPrizesWithoutId, pickWeightedPrize, type Prize } from "./prizes.js";
 import { prisma } from "./db.js";
 import { validateTelegramInitData } from "./telegram.js";
@@ -23,8 +26,14 @@ const requiredChannels = (process.env.REQUIRED_CHANNELS ?? "")
   .split(",")
   .map((channel) => channel.trim())
   .filter(Boolean);
+const corsOrigins = (process.env.CORS_ORIGINS ?? "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 const uploadDir = path.resolve(process.cwd(), process.env.UPLOAD_DIR ?? "uploads");
 const uploadBaseUrl = process.env.UPLOAD_BASE_URL ?? "";
+const jwtSecret = process.env.JWT_SECRET ?? "";
+const accessTokenTtl = process.env.ACCESS_TOKEN_TTL ?? "7d";
 const CONTENT_KEYS = {
   promoTerms: "content.promo_terms",
   prizeTerms: "content.prize_terms"
@@ -49,9 +58,23 @@ const DEFAULT_PRIZE_TERMS = [
 ].join("");
 
 const app = Fastify({ logger: true });
-await app.register(cors, { origin: true });
+await app.register(cors, {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (corsOrigins.length === 0) {
+      const allowLocalhost = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+      return callback(null, allowLocalhost);
+    }
+    callback(null, corsOrigins.includes(origin));
+  }
+});
 await app.register(sensible);
-await app.register(multipart);
+await app.register(multipart, {
+  limits: {
+    fileSize: 5 * 1024 * 1024,
+    files: 1
+  }
+});
 await fs.mkdir(uploadDir, { recursive: true });
 await app.register(fastifyStatic, {
   root: uploadDir,
@@ -87,6 +110,9 @@ const operatorWinActionSchema = z.object({
 const adminContentUpdateSchema = z.object({
   promoTerms: z.string().min(1),
   prizeTerms: z.string().min(1)
+});
+const uploadPathSchema = z.object({
+  prizeId: z.string().uuid()
 });
 
 function toDbPrizeType(type: Prize["type"]): PrizeType {
@@ -165,6 +191,14 @@ async function getContentSettings() {
   return { promoTerms, prizeTerms };
 }
 
+function sanitizeAllowedHtml(value: string) {
+  return sanitizeHtml(value, {
+    allowedTags: ["h3", "ul", "li", "p", "br", "strong", "em", "b", "i"],
+    allowedAttributes: {},
+    disallowedTagsMode: "discard"
+  });
+}
+
 async function ensureUser(telegramId: number, username?: string) {
   const telegramIdBigInt = BigInt(telegramId);
   return prisma.user.upsert({
@@ -206,6 +240,26 @@ function requireOperator(request: { headers: Record<string, unknown> }) {
   const candidate = request.headers["x-operator-token"];
   if (candidate !== operatorToken) {
     throw app.httpErrors.unauthorized("Invalid operator token");
+  }
+}
+
+function requireUser(request: { headers: Record<string, unknown> }) {
+  if (!jwtSecret) {
+    throw app.httpErrors.internalServerError("JWT_SECRET is not configured");
+  }
+  const authHeader = request.headers.authorization;
+  if (typeof authHeader !== "string" || !authHeader.startsWith("Bearer ")) {
+    throw app.httpErrors.unauthorized("Missing Bearer token");
+  }
+  const token = authHeader.slice("Bearer ".length).trim();
+  try {
+    const payload = jwt.verify(token, jwtSecret) as { userId: string; telegramId: number };
+    if (!payload.userId || !payload.telegramId) {
+      throw new Error("Invalid token payload");
+    }
+    return payload;
+  } catch {
+    throw app.httpErrors.unauthorized("Invalid or expired token");
   }
 }
 
@@ -362,7 +416,7 @@ app.post("/admin/prizes", async (request) => {
 
 app.post("/admin/prizes/:prizeId/image-upload", async (request) => {
   requireAdmin(request);
-  const params = z.object({ prizeId: z.string().min(1) }).parse(request.params);
+  const params = uploadPathSchema.parse(request.params);
   const file = await request.file();
   if (!file) {
     throw app.httpErrors.badRequest("File is required");
@@ -371,11 +425,16 @@ app.post("/admin/prizes/:prizeId/image-upload", async (request) => {
     throw app.httpErrors.badRequest("Only image files are allowed");
   }
 
-  const ext = file.filename.includes(".") ? file.filename.split(".").pop() : "bin";
+  const fileBuffer = await file.toBuffer();
+  const detected = await fileTypeFromBuffer(fileBuffer);
+  if (!detected || !detected.mime.startsWith("image/")) {
+    throw app.httpErrors.badRequest("Invalid image file content");
+  }
+  const ext = detected.ext || (file.filename.includes(".") ? file.filename.split(".").pop() : "bin");
   const safeExt = (ext || "bin").replace(/[^a-zA-Z0-9]/g, "").toLowerCase() || "bin";
   const storedFileName = `${params.prizeId}-${Date.now()}.${safeExt}`;
   const storedPath = path.join(uploadDir, storedFileName);
-  await file.toBuffer().then((buffer) => fs.writeFile(storedPath, buffer));
+  await fs.writeFile(storedPath, fileBuffer);
 
   const publicPath = `/uploads/${storedFileName}`;
   const imageUrl = uploadBaseUrl ? `${uploadBaseUrl.replace(/\/$/, "")}${publicPath}` : publicPath;
@@ -389,7 +448,7 @@ app.post("/admin/prizes/:prizeId/image-upload", async (request) => {
 
 app.delete("/admin/prizes/:prizeId/image", async (request) => {
   requireAdmin(request);
-  const params = z.object({ prizeId: z.string().min(1) }).parse(request.params);
+  const params = uploadPathSchema.parse(request.params);
   const current = await prisma.prize.findUnique({ where: { id: params.prizeId } });
   if (!current) {
     throw app.httpErrors.notFound("Prize not found");
@@ -473,13 +532,13 @@ app.patch("/admin/content/texts", async (request) => {
   await prisma.$transaction([
     prisma.appSetting.upsert({
       where: { key: CONTENT_KEYS.promoTerms },
-      update: { value: parsed.data.promoTerms },
-      create: { key: CONTENT_KEYS.promoTerms, value: parsed.data.promoTerms }
+      update: { value: sanitizeAllowedHtml(parsed.data.promoTerms) },
+      create: { key: CONTENT_KEYS.promoTerms, value: sanitizeAllowedHtml(parsed.data.promoTerms) }
     }),
     prisma.appSetting.upsert({
       where: { key: CONTENT_KEYS.prizeTerms },
-      update: { value: parsed.data.prizeTerms },
-      create: { key: CONTENT_KEYS.prizeTerms, value: parsed.data.prizeTerms }
+      update: { value: sanitizeAllowedHtml(parsed.data.prizeTerms) },
+      create: { key: CONTENT_KEYS.prizeTerms, value: sanitizeAllowedHtml(parsed.data.prizeTerms) }
     })
   ]);
 
@@ -536,8 +595,20 @@ app.post("/auth/telegram", async (request) => {
     where: { userId: user.id },
     orderBy: { spinAt: "desc" }
   });
+  if (!jwtSecret) {
+    throw app.httpErrors.internalServerError("JWT_SECRET is not configured");
+  }
+  const accessToken = jwt.sign(
+    {
+      userId: user.id,
+      telegramId
+    },
+    jwtSecret,
+    { expiresIn: accessTokenTtl as jwt.SignOptions["expiresIn"] }
+  );
 
   return {
+    accessToken,
     user: {
       telegramId,
       username,
@@ -549,10 +620,13 @@ app.post("/auth/telegram", async (request) => {
   };
 });
 
-app.get("/app/state/:telegramId", async (request) => {
-  const params = z.object({ telegramId: z.coerce.number().int().positive() }).parse(request.params);
+app.get("/app/state", async (request) => {
+  const auth = requireUser(request);
   await ensureDefaultPrizes();
-  const user = await ensureUser(params.telegramId);
+  const user = await prisma.user.findUnique({ where: { id: auth.userId } });
+  if (!user) {
+    throw app.httpErrors.notFound("User not found");
+  }
   const now = new Date();
 
   await prisma.win.updateMany({
@@ -604,14 +678,13 @@ app.get("/app/state/:telegramId", async (request) => {
 });
 
 app.post("/spin", async (request) => {
-  const parsed = spinSchema.safeParse(request.body);
-  if (!parsed.success) {
-    throw app.httpErrors.badRequest("Invalid spin payload");
-  }
-
+  const auth = requireUser(request);
   await ensureDefaultPrizes();
-  const user = await ensureUser(parsed.data.telegramId);
-  const isSubscribed = await isUserSubscribedToRequiredChannels(parsed.data.telegramId);
+  const user = await prisma.user.findUnique({ where: { id: auth.userId } });
+  if (!user) {
+    throw app.httpErrors.notFound("User not found");
+  }
+  const isSubscribed = await isUserSubscribedToRequiredChannels(auth.telegramId);
   if (!isSubscribed) {
     throw app.httpErrors.forbidden("Subscription to required channels is missing");
   }
@@ -688,8 +761,11 @@ app.post("/spin", async (request) => {
 
 app.post("/wins/:winId/send-to-shop", async (request) => {
   const params = z.object({ winId: z.string().min(1) }).parse(request.params);
-  const body = z.object({ telegramId: z.number().int().positive() }).parse(request.body);
-  const user = await ensureUser(body.telegramId);
+  const auth = requireUser(request);
+  const user = await prisma.user.findUnique({ where: { id: auth.userId } });
+  if (!user) {
+    throw app.httpErrors.notFound("User not found");
+  }
   const win = await prisma.win.findFirst({
     where: {
       id: params.winId,

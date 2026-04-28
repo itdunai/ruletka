@@ -68,6 +68,9 @@ SHOP_CHAT_ID=-1001234567890
 
 ADMIN_TOKEN=very_long_admin_token
 OPERATOR_TOKEN=very_long_operator_token
+JWT_SECRET=very_long_jwt_secret
+ACCESS_TOKEN_TTL=7d
+CORS_ORIGINS=https://wheel.yourdomain.ru
 
 UPLOAD_DIR=uploads
 UPLOAD_BASE_URL=https://api.yourdomain.ru
@@ -75,6 +78,22 @@ EXPIRATION_JOB_INTERVAL_MS=60000
 
 DATABASE_URL=postgresql://user:password@127.0.0.1:5432/ruletka?schema=public
 ```
+
+Как заполнять `JWT_SECRET`, `ACCESS_TOKEN_TTL`, `CORS_ORIGINS`:
+- `JWT_SECRET`:
+  - Это приватный ключ подписи JWT, нужен длинный случайный секрет (минимум 32 байта).
+  - Linux/macOS: `openssl rand -hex 32`
+  - Node.js: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+  - PowerShell: `[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')`
+- `ACCESS_TOKEN_TTL`:
+  - Рекомендуемое значение: `7d`.
+  - Если нужна более строгая безопасность: `1d` или `12h`.
+  - Поддерживаемые форматы: `15m`, `2h`, `7d`.
+- `CORS_ORIGINS`:
+  - Укажите frontend-домен(ы), которым разрешен доступ к API.
+  - Один домен: `https://wheel.yourdomain.ru`
+  - Несколько доменов: `https://wheel.yourdomain.ru,https://admin.yourdomain.ru`
+  - Для локального теста можно временно добавить `http://localhost:5173`.
 
 ## 5. Развертывание на Beget VPS
 
@@ -211,6 +230,27 @@ sudo certbot --nginx -d wheel.yourdomain.ru -d api.yourdomain.ru
 - Регулярно меняйте `ADMIN_TOKEN`, `OPERATOR_TOKEN`.
 - Включите резервное копирование PostgreSQL.
 
+Пример настройки UFW (VPS Ubuntu):
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw deny 3001/tcp
+sudo ufw enable
+sudo ufw status numbered
+```
+
+Дополнительно проверьте, что API не открыт наружу:
+
+```bash
+ss -ltnp | grep 3001
+```
+
+Ожидаемо: процесс API слушает только `127.0.0.1:3001`, а внешний доступ идет через Nginx на 80/443.
+
 ## 10. Полезные команды
 
 ```bash
@@ -223,3 +263,42 @@ pm2 restart ruletka-bot
 ```bash
 curl https://api.yourdomain.ru/health
 ```
+
+## 11. Проверка безопасности после деплоя
+
+1) Проверка разрешенного CORS origin:
+
+```bash
+curl -i -X OPTIONS "https://api.yourdomain.ru/health" \
+  -H "Origin: https://wheel.yourdomain.ru" \
+  -H "Access-Control-Request-Method: GET"
+```
+
+Ожидаемо: в ответе есть `access-control-allow-origin: https://wheel.yourdomain.ru`.
+
+2) Проверка блокировки чужого origin:
+
+```bash
+curl -i -X OPTIONS "https://api.yourdomain.ru/health" \
+  -H "Origin: https://evil.example.com" \
+  -H "Access-Control-Request-Method: GET"
+```
+
+Ожидаемо: `access-control-allow-origin` отсутствует.
+
+3) Проверка user endpoint без токена:
+
+```bash
+curl -i "https://api.yourdomain.ru/app/state"
+```
+
+Ожидаемо: `401 Unauthorized`.
+
+4) Проверка admin endpoint с невалидным токеном:
+
+```bash
+curl -i "https://api.yourdomain.ru/admin/prizes" \
+  -H "x-admin-token: wrong_token"
+```
+
+Ожидаемо: `401 Unauthorized`.

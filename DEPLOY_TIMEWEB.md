@@ -89,6 +89,9 @@ SHOP_CHAT_ID=-1001234567890
 
 ADMIN_TOKEN=very_long_random_admin_token
 OPERATOR_TOKEN=very_long_random_operator_token
+JWT_SECRET=very_long_random_jwt_secret
+ACCESS_TOKEN_TTL=7d
+CORS_ORIGINS=https://wheel.yourdomain.ru
 
 DATABASE_URL=postgresql://user:password@127.0.0.1:5432/ruletka?schema=public
 ```
@@ -103,7 +106,24 @@ DATABASE_URL=postgresql://user:password@127.0.0.1:5432/ruletka?schema=public
 - `SHOP_CHAT_ID`: куда API отправляет сообщение о выигрыше.
 - `ADMIN_TOKEN`: для защищенных `/admin/*` эндпоинтов.
 - `OPERATOR_TOKEN`: для `/operator/*` эндпоинтов и команд `/claim_win`, `/reject_win`.
+- `JWT_SECRET`: ключ подписи `accessToken` для пользовательских API.
+- `ACCESS_TOKEN_TTL`: срок жизни access token (например `7d`).
+- `CORS_ORIGINS`: список разрешенных origin через запятую.
 - `DATABASE_URL`: строка подключения к PostgreSQL.
+
+Как заполнять новые переменные:
+- `JWT_SECRET`: это длинный случайный секрет (минимум 32 байта), хранится только на сервере.
+  - Linux/macOS: `openssl rand -hex 32`
+  - Node.js (любой OS): `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+  - PowerShell: `[guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N')`
+- `ACCESS_TOKEN_TTL`: срок жизни JWT. Рекомендуемо:
+  - `7d` для обычного UX в mini app
+  - `1d` если хотите более частую переавторизацию
+  - Форматы: `15m`, `12h`, `7d`
+- `CORS_ORIGINS`: домены, с которых разрешены запросы к API.
+  - Один origin: `https://wheel.yourdomain.ru`
+  - Несколько origin (через запятую): `https://wheel.yourdomain.ru,https://admin.yourdomain.ru`
+  - Для локальной разработки: `http://localhost:5173`
 
 ## 5. Как сгенерировать безопасные токены
 
@@ -298,7 +318,42 @@ curl -X POST https://api.yourdomain.ru/admin/prizes \
   -d '{"title":"Скидка 20%","type":"discount","value":"20","weight":5,"isActive":true}'
 ```
 
-## 10. Безопасность (обязательно)
+## 10. Проверка безопасности после деплоя
+
+1) CORS должен пускать только разрешенный origin:
+
+```bash
+curl -i -X OPTIONS "https://api.yourdomain.ru/health" \
+  -H "Origin: https://wheel.yourdomain.ru" \
+  -H "Access-Control-Request-Method: GET"
+```
+
+Ожидаемо: есть `access-control-allow-origin: https://wheel.yourdomain.ru`.
+
+2) CORS должен блокировать чужой origin:
+
+```bash
+curl -i -X OPTIONS "https://api.yourdomain.ru/health" \
+  -H "Origin: https://evil.example.com" \
+  -H "Access-Control-Request-Method: GET"
+```
+
+Ожидаемо: нет `access-control-allow-origin` для чужого домена.
+
+3) User endpoint без Bearer-токена должен возвращать 401:
+
+```bash
+curl -i "https://api.yourdomain.ru/app/state"
+```
+
+4) Admin endpoint с неверным токеном должен возвращать 401:
+
+```bash
+curl -i "https://api.yourdomain.ru/admin/prizes" \
+  -H "x-admin-token: wrong_token"
+```
+
+## 11. Безопасность (обязательно)
 
 - Никогда не коммитьте `.env`.
 - Ограничьте firewall:
@@ -308,7 +363,28 @@ curl -X POST https://api.yourdomain.ru/admin/prizes \
 - Регулярно обновляйте зависимости и ОС.
 - Делайте бэкапы PostgreSQL.
 
-## 11. Если deployment на Timeweb Apps (без root)
+Пример настройки UFW (Ubuntu):
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw deny 3001/tcp
+sudo ufw enable
+sudo ufw status numbered
+```
+
+Проверка, что API-порт не торчит наружу:
+
+```bash
+ss -ltnp | grep 3001
+```
+
+Ожидаемо: API слушает `127.0.0.1:3001` (или `localhost:3001`) и проксируется только через Nginx.
+
+## 12. Если deployment на Timeweb Apps (без root)
 
 Если используете managed-приложения Timeweb:
 - отдельно поднимаете сервисы `api` и `bot` как Node приложения,

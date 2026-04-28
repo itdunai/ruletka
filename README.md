@@ -45,7 +45,7 @@ npm run dev:miniapp
 
 - API:
   - `POST /auth/telegram` (поддерживает проверку Telegram `initData` через `TELEGRAM_BOT_TOKEN`)
-  - `GET /app/state/:telegramId`
+  - `GET /app/state` (требует `Authorization: Bearer <accessToken>`)
   - `POST /spin` (лимит 1 раз в неделю, PostgreSQL/Prisma)
   - `POST /wins/:winId/send-to-shop` (реальная отправка в чат магазина через Bot API)
   - `GET /admin/prizes` (требует заголовок `x-admin-token`)
@@ -63,7 +63,7 @@ npm run dev:miniapp
   - `/claim_win <win_id> [комментарий]` для оператора
   - `/reject_win <win_id> [причина]` для оператора
 - Mini App:
-  - авторизация через Telegram WebApp (`initData`) + fallback по Telegram ID для локальной разработки
+  - авторизация через Telegram WebApp (`initData`) с получением `accessToken`
   - запуск спина через API
   - отправка приза оператору через API
   - экран "Мои призы"
@@ -72,6 +72,8 @@ npm run dev:miniapp
 - `POST /spin` теперь повторно проверяет подписку на обязательные каналы на backend.
 - API запускает фоновую задачу экспирации активных выигрышей (`EXPIRATION_JOB_INTERVAL_MS`).
 - Загруженные изображения призов отдаются через `/uploads/*`.
+- Тексты условий в HTML формате санитизируются на backend перед сохранением.
+- CORS ограничивается через `CORS_ORIGINS` (если не задано, разрешен только localhost).
 
 ## Следующий шаг
 

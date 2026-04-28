@@ -38,6 +38,17 @@ type ContentTexts = {
   promoTerms: string;
   prizeTerms: string;
 };
+type AuthResponse = {
+  accessToken: string;
+  user: {
+    telegramId: number;
+    username?: string;
+    firstName?: string;
+    lastName?: string;
+  };
+  canSpin: boolean;
+  nextSpinAt: string | null;
+};
 
 type TelegramUser = {
   id: number;
@@ -100,6 +111,7 @@ export function App() {
   const [error, setError] = useState<string>("");
   const [offset, setOffset] = useState(0);
   const [spinning, setSpinning] = useState(false);
+  const [accessToken, setAccessToken] = useState("");
   const [contentTexts, setContentTexts] = useState<ContentTexts>({
     promoTerms:
       "<h3>Правила</h3><ul><li>Подпишитесь на каналы магазина</li><li>Нажмите \"Крутить\"</li><li>Приз действует 3 дня</li><li>Покажите сообщение оператору</li><li>1 попытка в неделю</li></ul>",
@@ -110,7 +122,6 @@ export function App() {
   const trackRef = useRef<HTMLDivElement | null>(null);
   const idleRafRef = useRef<number | null>(null);
 
-  const userIdAsNumber = useMemo(() => Number(telegramId), [telegramId]);
   const displayName = username ? `@${username}` : firstName || "Пользователь";
   const prizePool = appState?.prizesPreview?.length ? appState.prizesPreview : [];
   const repeatedPrizes = useMemo(() => {
@@ -142,10 +153,14 @@ export function App() {
     return `${API_BASE_URL}${imageUrl}`;
   }
 
-  async function fetchState(telegramIdToLoad: number) {
+  async function fetchState() {
     setStateLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/app/state/${telegramIdToLoad}`);
+      const response = await fetch(`${API_BASE_URL}/app/state`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`
+        }
+      });
       const data = (await response.json()) as AppStateResponse;
       if (!response.ok) {
         throw new Error("Не удалось загрузить состояние приложения");
@@ -206,11 +221,14 @@ export function App() {
           initData
         })
       });
-      const data = await response.json();
+      const data = (await response.json()) as Partial<AuthResponse> & { message?: string };
       if (!response.ok) {
         throw new Error(data?.message ?? "Не удалось авторизоваться");
       }
-      await fetchState(Number(telegramId));
+      if (!data.accessToken) {
+        throw new Error("Не получен access token");
+      }
+      setAccessToken(data.accessToken);
       await fetchContentTexts();
     }
 
@@ -219,6 +237,11 @@ export function App() {
       setError(message);
     });
   }, [authReady, telegramId, username, firstName, lastName, initData]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    void fetchState();
+  }, [accessToken]);
 
   useEffect(() => {
     if (!trackRef.current) return;
@@ -289,8 +312,11 @@ export function App() {
     try {
       const response = await fetch(`${API_BASE_URL}/spin`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ telegramId: userIdAsNumber })
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({})
       });
       const data = await response.json();
       if (!response.ok) {
@@ -299,7 +325,7 @@ export function App() {
       const result = data as SpinResponse;
       await animateSpinToPrize(result.prize.id);
       setSpinResult(result);
-      await fetchState(userIdAsNumber);
+      await fetchState();
       setScreen("result");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Ошибка запроса";
@@ -316,8 +342,11 @@ export function App() {
     try {
       const response = await fetch(`${API_BASE_URL}/wins/${spinResult.winId}/send-to-shop`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ telegramId: userIdAsNumber })
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({})
       });
       const data = await response.json();
       if (!response.ok) {
