@@ -1,3 +1,9 @@
+const path = require("node:path");
+const dotenv = require("dotenv");
+
+const envPath = path.resolve(__dirname, ".env");
+const parsedEnv = dotenv.config({ path: envPath }).parsed ?? {};
+
 module.exports = {
   apps: [
     {
@@ -6,6 +12,7 @@ module.exports = {
       script: "npm",
       args: "run start --workspace @ruletka/api",
       env: {
+        ...parsedEnv,
         NODE_ENV: "production"
       }
     },
@@ -15,6 +22,7 @@ module.exports = {
       script: "npm",
       args: "run start --workspace @ruletka/bot",
       env: {
+        ...parsedEnv,
         NODE_ENV: "production"
       }
     }
