@@ -101,7 +101,7 @@ function winStatusLabel(status: "active" | "expired" | "claimed" | "cancelled") 
 export function App() {
   const adminMode = useMemo(() => new URLSearchParams(window.location.search).get("admin") === "1", []);
   const [screen, setScreen] = useState<Screen>("main");
-  const [telegramId, setTelegramId] = useState("522734778");
+  const [telegramId, setTelegramId] = useState("");
   const [loading, setLoading] = useState(false);
   const [stateLoading, setStateLoading] = useState(false);
   const [spinResult, setSpinResult] = useState<SpinResponse | null>(null);
@@ -213,6 +213,9 @@ export function App() {
 
     async function authAndLoad() {
       setError("");
+      if (!initData && !telegramId) {
+        throw new Error("Откройте mini app через кнопку бота в Telegram (/start).");
+      }
       const response = await fetch(`${API_BASE_URL}/auth/telegram`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -377,7 +380,7 @@ export function App() {
               <div className="topbarLeft">
                 Username: <span>{displayName}</span>
                 <br />
-                ID: {telegramId}
+                ID: {telegramId || "—"}
               </div>
               <button className="prizesBtn" onClick={() => setScreen("myPrizes")}>
                 Мои призы
@@ -449,7 +452,7 @@ export function App() {
               <div className="topbarLeft">
                 Username: <span>{displayName}</span>
                 <br />
-                ID: {telegramId}
+                ID: {telegramId || "—"}
               </div>
               <button className="prizesBtn" onClick={() => setScreen("myPrizes")}>
                 Мои призы
