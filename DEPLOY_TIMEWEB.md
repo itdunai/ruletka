@@ -83,6 +83,7 @@ API_HOST=0.0.0.0
 BOT_TOKEN=123456:AA....
 TELEGRAM_BOT_TOKEN=123456:AA....
 API_BASE_URL=https://api.yourdomain.ru
+VITE_API_BASE_URL=https://api.yourdomain.ru
 MINIAPP_URL=https://wheel.yourdomain.ru
 REQUIRED_CHANNELS=@channel_one,@channel_two
 SHOP_CHAT_ID=-1001234567890
@@ -101,6 +102,7 @@ DATABASE_URL=postgresql://user:password@127.0.0.1:5432/ruletka?schema=public
 - `BOT_TOKEN`: токен бота, используется ботом и API для отправки сообщений.
 - `TELEGRAM_BOT_TOKEN`: токен для проверки `initData` (может быть тем же).
 - `API_BASE_URL`: адрес API для команд оператора в `apps/bot`.
+- `VITE_API_BASE_URL`: адрес API, который вшивается в собранный frontend mini app.
 - `MINIAPP_URL`: публичный URL frontend.
 - `REQUIRED_CHANNELS`: каналы для проверки подписки.
 - `SHOP_CHAT_ID`: куда API отправляет сообщение о выигрыше.
@@ -124,6 +126,7 @@ DATABASE_URL=postgresql://user:password@127.0.0.1:5432/ruletka?schema=public
   - Один origin: `https://wheel.yourdomain.ru`
   - Несколько origin (через запятую): `https://wheel.yourdomain.ru,https://admin.yourdomain.ru`
   - Для локальной разработки: `http://localhost:5173`
+- `VITE_API_BASE_URL`: обязательна для `npm run build --workspace @ruletka/miniapp`, в проде ставьте `https://api.yourdomain.ru`.
 
 ## 5. Как сгенерировать безопасные токены
 

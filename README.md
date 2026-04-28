@@ -9,6 +9,7 @@
 ## Быстрый запуск
 
 1. Скопируйте `.env.example` в `.env` и заполните значения.
+   - Для frontend обязательно укажите `VITE_API_BASE_URL` (например, `http://localhost:3001` локально и `https://api.yourdomain.ru` в проде).
 2. Установите зависимости:
 
 ```bash

@@ -62,6 +62,7 @@ API_HOST=0.0.0.0
 BOT_TOKEN=123456:AA...
 TELEGRAM_BOT_TOKEN=123456:AA...
 API_BASE_URL=https://api.yourdomain.ru
+VITE_API_BASE_URL=https://api.yourdomain.ru
 MINIAPP_URL=https://wheel.yourdomain.ru
 REQUIRED_CHANNELS=@channel_one,@channel_two
 SHOP_CHAT_ID=-1001234567890
@@ -94,6 +95,10 @@ DATABASE_URL=postgresql://user:password@127.0.0.1:5432/ruletka?schema=public
   - Один домен: `https://wheel.yourdomain.ru`
   - Несколько доменов: `https://wheel.yourdomain.ru,https://admin.yourdomain.ru`
   - Для локального теста можно временно добавить `http://localhost:5173`.
+- `VITE_API_BASE_URL`:
+  - Обязательная переменная для сборки mini app.
+  - Должна указывать на публичный API (`https://api.yourdomain.ru`).
+  - Если не указать, frontend не соберется и не будет fallback на `localhost`.
 
 ## 5. Развертывание на Beget VPS
 
@@ -129,7 +134,7 @@ sudo -u postgres psql
 
 ```sql
 CREATE DATABASE ruletka;
-CREATE USER ruletka_user WITH ENCRYPTED PASSWORD 'strong_password_here';
+CREATE USER ruletka_user WITH ENCRYPTED PASSWORD 'RJGbK3oKT!wv';
 GRANT ALL PRIVILEGES ON DATABASE ruletka TO ruletka_user;
 \q
 ```
@@ -188,13 +193,12 @@ sudo systemctl reload nginx
 Перед этим поменяйте в конфиге:
 - `wheel.example.com`
 - `api.example.com`
-- путь к проекту
-
+- путь к проекту 
 ## 5.8 SSL
 
 ```bash
 sudo apt install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d wheel.yourdomain.ru -d api.yourdomain.ru
+sudo certbot --nginx -d wheel.smarketirk38.ru -d api.smarketirk38.ru
 ```
 
 ## 6. Быстрый smoke-test

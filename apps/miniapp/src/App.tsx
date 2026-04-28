@@ -71,7 +71,10 @@ declare global {
   }
 }
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3001";
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
+if (!API_BASE_URL) {
+  throw new Error("VITE_API_BASE_URL is required");
+}
 const CARD_WIDTH = 130;
 const CARD_GAP = 12;
 const STEP = CARD_WIDTH + CARD_GAP;
