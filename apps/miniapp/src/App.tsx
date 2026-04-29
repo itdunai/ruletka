@@ -143,11 +143,12 @@ export function App() {
     const diffMs = targetMs - Date.now();
     if (diffMs <= 0) return "Доступно";
 
-    const totalMinutes = Math.floor(diffMs / 60_000);
-    const days = Math.floor(totalMinutes / (60 * 24));
-    const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
-    const minutes = totalMinutes % 60;
-    return `${days} дн ${hours} ч ${minutes} мин`;
+    const totalSeconds = Math.floor(diffMs / 1000);
+    const days = Math.floor(totalSeconds / 86_400);
+    const hours = Math.floor((totalSeconds % 86_400) / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    return `${days} дн ${hours} ч ${minutes} мин ${seconds} сек`;
   }
 
   function prizeToken(title: string) {
@@ -492,6 +493,10 @@ export function App() {
               <button className="textLink" onClick={() => setScreen("terms")}>
                 Условиями акции
               </button>
+              <br />
+              <a className="textLink" href="https://t.me/smarket_sup" target="_blank" rel="noreferrer">
+                Поддержка
+              </a>
             </div>
           </div>
         )}
