@@ -116,6 +116,7 @@ export function App() {
   const [offset, setOffset] = useState(0);
   const [spinning, setSpinning] = useState(false);
   const [accessToken, setAccessToken] = useState("");
+  const [nextSpinCountdown, setNextSpinCountdown] = useState("");
   const [contentTexts, setContentTexts] = useState<ContentTexts>({
     promoTerms:
       "<h3>Правила</h3><ul><li>Подпишитесь на каналы магазина</li><li>Нажмите \"Крутить\"</li><li>Приз действует 3 дня</li><li>Покажите сообщение оператору</li><li>1 попытка в неделю</li></ul>",
@@ -136,6 +137,18 @@ export function App() {
     () => (spinResult ? prizePool.find((prize) => prize.id === spinResult.prize.id) ?? null : null),
     [spinResult, prizePool]
   );
+
+  function formatCountdown(targetIso: string) {
+    const targetMs = new Date(targetIso).getTime();
+    const diffMs = targetMs - Date.now();
+    if (diffMs <= 0) return "Доступно";
+
+    const totalMinutes = Math.floor(diffMs / 60_000);
+    const days = Math.floor(totalMinutes / (60 * 24));
+    const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+    const minutes = totalMinutes % 60;
+    return `${days} дн ${hours} ч ${minutes} мин`;
+  }
 
   function prizeToken(title: string) {
     const percent = title.match(/\d+%/);
@@ -276,6 +289,21 @@ export function App() {
   }, [accessToken]);
 
   useEffect(() => {
+    if (!appState?.nextSpinAt) {
+      setNextSpinCountdown("");
+      return;
+    }
+
+    const update = () => {
+      setNextSpinCountdown(formatCountdown(appState.nextSpinAt!));
+    };
+
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [appState?.nextSpinAt]);
+
+  useEffect(() => {
     if (!trackRef.current) return;
     trackRef.current.style.transform = `translateX(${-offset}px)`;
   }, [offset]);
@@ -414,9 +442,7 @@ export function App() {
             <div className="slotSection">
               <div className={`timerRow ${appState?.nextSpinAt ? "show" : ""}`}>
                 <div className="tlabel">До следующей попытки:</div>
-                <div className="tpill">
-                  {appState?.nextSpinAt ? new Date(appState.nextSpinAt).toLocaleString("ru-RU") : "Доступно"}
-                </div>
+                <div className="tpill">{nextSpinCountdown || "Доступно"}</div>
               </div>
               <div className="slotOuter">
                 <div className="fadeL" />
