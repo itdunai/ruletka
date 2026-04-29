@@ -230,6 +230,8 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 4px;
+  position: absolute;
+  top: 50px;
 }
 
 .timerRow.show {
@@ -238,7 +240,7 @@ body {
 
 .tlabel {
   font-size: 11px;
-  color: var(--text2);
+  color: var(--green);
   text-transform: uppercase;
 }
 
@@ -278,8 +280,9 @@ body {
 
 .spinBtn.used {
   background: var(--bg3);
-  color: var(--text2);
-  border: 1px solid var(--border);
+  color: #cdcdcd;
+  border: 1px solid var(--text);
+  text-shadow: 0 0 black;
 }
 
 .tnote {
