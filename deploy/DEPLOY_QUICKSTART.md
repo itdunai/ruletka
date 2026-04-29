@@ -42,3 +42,7 @@ curl https://api.example.com/health
 pm2 logs ruletka-api
 pm2 logs ruletka-bot
 ```
+
+## 6) Админ: просмотр крутивших и сброс по `telegramId`
+
+Список SQL-команд по шагам (подключение `psql`, выборки, удаление по Telegram ID) описан в **`DEPLOY_TIMEWEB.md`**, подраздел **8.1**. На Beget — то же самое в **`DEPLOY_BEGET.md`**, раздел **10**.

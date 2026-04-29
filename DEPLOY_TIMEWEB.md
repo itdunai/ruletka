@@ -304,6 +304,77 @@ sudo certbot --nginx -d wheel.yourdomain.ru -d api.yourdomain.ru
    - `/claim_win <win_id>` или
    - `/reject_win <win_id> причина`
 
+### 8.1 База: кто уже крутил рулетку и удаление спинов/призов по Telegram ID
+
+Подключение к PostgreSQL (имя БД должно совпадать с тем, что в `DATABASE_URL`, в примерах ниже — `ruletka`):
+
+```bash
+sudo -u postgres psql -d ruletka
+```
+
+**1) Все пользователи, у которых был хотя бы один спин** (сводка):
+
+```sql
+SELECT u.id AS user_uuid,
+       u."telegramId",
+       u.username,
+       COUNT(s.id) AS spins_count,
+       MAX(s."spinAt") AS last_spin_at
+FROM "User" u
+INNER JOIN "Spin" s ON s."userId" = u.id
+GROUP BY u.id, u."telegramId", u.username
+ORDER BY last_spin_at DESC;
+```
+
+**2) Детально: каждый спин и выпавший приз**:
+
+```sql
+SELECT u."telegramId",
+       u.username,
+       s."spinAt",
+       p.title AS prize_title,
+       s.id AS spin_id
+FROM "User" u
+JOIN "Spin" s ON s."userId" = u.id
+JOIN "Prize" p ON p.id = s."prizeId"
+ORDER BY s."spinAt" DESC;
+```
+
+**3) Удалить все результаты пользователя по числовому Telegram ID**  
+Удаляются `ShopNotification` → `Win` → `Spin` в этом порядке. Сделайте бэкап БД; подставьте вместо `123456789` реальный `telegramId`.
+
+Проверка пользователя:
+
+```sql
+SELECT id, "telegramId", username FROM "User" WHERE "telegramId" = 123456789;
+```
+
+Транзакция:
+
+```sql
+BEGIN;
+
+DELETE FROM "ShopNotification"
+WHERE "winId" IN (
+  SELECT w.id FROM "Win" w
+  WHERE w."userId" = (SELECT id FROM "User" WHERE "telegramId" = 123456789)
+);
+
+DELETE FROM "Win"
+WHERE "userId" = (SELECT id FROM "User" WHERE "telegramId" = 123456789);
+
+DELETE FROM "Spin"
+WHERE "userId" = (SELECT id FROM "User" WHERE "telegramId" = 123456789);
+
+COMMIT;
+```
+
+Строка `User` после этого сохраняется. Полное удаление учётки только после очистки спинов/выигрышей:
+
+```sql
+DELETE FROM "User" WHERE "telegramId" = 123456789;
+```
+
 ## 9. Полезные API команды для админа
 
 Список призов:

@@ -28,7 +28,7 @@ export function pickWeightedPrize(prizes: Prize[]): Prize {
   const active = prizes.filter((p) => p.isActive && p.weight > 0);
   const totalWeight = active.reduce((sum, p) => sum + p.weight, 0);
   if (totalWeight <= 0) {
-    throw new Error("No active prizes with positive weight");
+    throw new Error("Нет активных призов с положительным весом");
   }
 
   let random = Math.random() * totalWeight;

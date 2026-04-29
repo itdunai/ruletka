@@ -13,6 +13,7 @@ type SpinResponse = {
   createdAt: string;
   expiresAt: string;
   nextSpinAt: string | null;
+  reminderSent?: boolean;
 };
 
 type AppStateResponse = {
@@ -73,10 +74,10 @@ declare global {
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
 if (!API_BASE_URL) {
-  throw new Error("VITE_API_BASE_URL is required");
+  throw new Error("Требуется VITE_API_BASE_URL");
 }
-const CARD_WIDTH = 130;
-const CARD_GAP = 12;
+const CARD_WIDTH = 280;
+const CARD_GAP = 0;
 const STEP = CARD_WIDTH + CARD_GAP;
 const REPS = 14;
 const VIEWPORT_CENTER = 180;
@@ -221,6 +222,12 @@ export function App() {
       setUsername(effectiveUser.username ?? "");
       setFirstName(effectiveUser.first_name ?? "");
       setLastName(effectiveUser.last_name ?? "");
+    } else if (import.meta.env.DEV && window.location.hostname === "localhost") {
+      // Local browser demo without Telegram WebApp context.
+      setTelegramId("700000001");
+      setUsername("demo_user");
+      setFirstName("Demo");
+      setLastName("User");
     }
     setInitData(webApp?.initData || decodedInitData || "");
     setAuthReady(true);
@@ -360,7 +367,7 @@ export function App() {
     }
   }
 
-  async function sendWinToShop(winId: string) {
+  async function resendWinReminder(winId: string) {
     setError("");
     setLoading(true);
     try {
@@ -374,20 +381,15 @@ export function App() {
       });
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data?.message ?? "Не удалось отправить приз");
+        throw new Error(data?.message ?? "Не удалось отправить сообщение");
       }
-      alert("Приз отправлен оператору магазина.");
+      alert("Сообщение с призом отправлено в чат с ботом.");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Ошибка отправки";
       setError(message);
     } finally {
       setLoading(false);
     }
-  }
-
-  async function sendToShop() {
-    if (!spinResult) return;
-    await sendWinToShop(spinResult.winId);
   }
 
   if (adminMode) {
@@ -420,10 +422,6 @@ export function App() {
                 <div className="fadeL" />
                 <div className="fadeR" />
                 <div className="glowC" />
-                <div className="centerFrame">
-                  <div className="arrT" />
-                  <div className="arrB" />
-                </div>
                 <div className="track" ref={trackRef}>
                   {repeatedPrizes.map((prize, index) => {
                     const token = prizeToken(prize.title);
@@ -451,13 +449,16 @@ export function App() {
                   })}
                 </div>
               </div>
-              <button
-                className={`spinBtn ${!appState?.canSpin ? "used" : ""}`}
-                disabled={loading || stateLoading || spinning || !appState?.canSpin}
-                onClick={spinOnce}
-              >
-                {loading || spinning ? "Крутим..." : appState?.canSpin ? "Крутить" : "Уже крутили"}
-              </button>
+              <div className="spinDock">
+                <img className="spinTriangle" src="/images/triangle.svg" alt="" aria-hidden="true" />
+                <button
+                  className={`spinBtn ${!appState?.canSpin ? "used" : ""}`}
+                  disabled={loading || stateLoading || spinning || !appState?.canSpin}
+                  onClick={spinOnce}
+                >
+                  {loading || spinning ? "Крутим..." : appState?.canSpin ? "Крутить" : "Уже крутили"}
+                </button>
+              </div>
               {error ? <div className="errorNote">{error}</div> : null}
             </div>
             <div className="tnote">
@@ -506,11 +507,8 @@ export function App() {
                 <div>Забрать приз в течение <span>3 дней</span></div>
                 <div>Сегодня: <span>{new Date(spinResult.createdAt).toLocaleString("ru-RU")}</span></div>
                 <div>Забрать до: <span>{new Date(spinResult.expiresAt).toLocaleString("ru-RU")}</span></div>
-                <div style={{ marginTop: 6 }}>Перешлите сообщение в чат магазина</div>
+                <div style={{ marginTop: 6 }}>Сообщение с призом отправлено вам в чат с ботом</div>
               </div>
-              <button className="sbtn" onClick={sendToShop} disabled={loading}>
-                Отправить оператору
-              </button>
               <button className="lbtn" onClick={() => setScreen("prizeTerms")}>
                 Условия получения приза
               </button>
@@ -566,7 +564,7 @@ export function App() {
                       <div className="pcmeta">
                         <div className="pcval">{winStatusLabel(win.status)}</div>
                         {win.status === "active" ? (
-                          <button className="pcResendBtn" onClick={() => void sendWinToShop(win.id)} disabled={loading}>
+                          <button className="pcResendBtn" onClick={() => void resendWinReminder(win.id)} disabled={loading}>
                             Отправить повторно
                           </button>
                         ) : null}

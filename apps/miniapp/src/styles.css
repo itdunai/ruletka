@@ -1,3 +1,13 @@
+@font-face {
+  font-family: "BOWLER";
+  src:
+    url("/fonts/BOWLER.woff2") format("woff2"),
+    url("/fonts/BOWLER.woff") format("woff");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --bg: #1a1c18;
   --bg2: #222520;
@@ -16,7 +26,7 @@
 
 body {
   background: #0e100d;
-  font-family: system-ui, sans-serif;
+  font-family: "Century Gothic", CenturyGothic, "Apple Gothic", "URW Gothic L", sans-serif;
 }
 
 .pageWrap {
@@ -56,7 +66,7 @@ body {
 
 .topbarLeft {
   font-size: 12px;
-  color: var(--text2);
+  color: var(--text);
   line-height: 1.6;
 }
 
@@ -65,15 +75,27 @@ body {
 }
 
 .prizesBtn {
-  background: var(--green);
-  border: none;
-  border-radius: 20px;
-  padding: 7px 14px;
-  color: #1a1c18;
-  font-size: 12px;
-  font-weight: 700;
+  position: relative;
+  border-radius: 24px;
+  padding: 3px 15px;
+  color: #bfff00;
+  font-size: 16px;
+  font-weight: bolder;
   cursor: pointer;
   text-transform: uppercase;
+  font-family: "BOWLER", sans-serif;
+  background: #608100;
+  border: 1px solid #bfff00;
+  text-shadow:
+    1px 1px 0 #75ba00,
+    1px -1px 0 #75ba00,
+    -1px 1px 0 #75ba00,
+    -1px -1px 0 #75ba00,
+    1px 0 0 #75ba00,
+    0 1px 0 #75ba00,
+    -1px 0 0 #75ba00,
+    0 -1px 0 #75ba00,
+    1px 1px 1px rgba(117, 186, 0, 0);
 }
 
 .slotSection {
@@ -82,15 +104,18 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 20px 0 8px;
-  gap: 16px;
+  position: relative;
+  padding: 20px 0 0;
+  gap: 8px;
 }
 
 .slotOuter {
   width: 360px;
-  height: 190px;
+  height: auto;
+  min-height: 320px;
   position: relative;
   overflow: hidden;
+  margin-top: -100px;
 }
 
 .fadeL {
@@ -98,7 +123,7 @@ body {
   left: 0;
   top: 0;
   bottom: 0;
-  width: 80px;
+  width: 40px;
   background: linear-gradient(to right, var(--bg) 50%, transparent);
   z-index: 5;
 }
@@ -108,7 +133,7 @@ body {
   right: 0;
   top: 0;
   bottom: 0;
-  width: 80px;
+  width: 40px;
   background: linear-gradient(to left, var(--bg) 50%, transparent);
   z-index: 5;
 }
@@ -116,46 +141,13 @@ body {
 .glowC {
   position: absolute;
   left: 180px;
-  top: 95px;
-  transform: translate(-50%, -50%);
-  width: 150px;
-  height: 150px;
+  top: 0;
+  transform: translate(-50%, 0);
+  width: 300px;
+  height: 300px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(168, 216, 50, 0.13) 0%, transparent 70%);
+  background: radial-gradient(circle, rgba(168, 216, 50, 0.2) 0%, transparent 70%);
   z-index: 4;
-}
-
-.centerFrame {
-  position: absolute;
-  left: 180px;
-  top: 95px;
-  transform: translate(-50%, -50%);
-  width: 140px;
-  height: 176px;
-  border: 2px solid var(--green);
-  border-radius: 18px;
-  z-index: 6;
-}
-
-.arrT,
-.arrB {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 0;
-  height: 0;
-  border-left: 10px solid transparent;
-  border-right: 10px solid transparent;
-}
-
-.arrT {
-  top: -13px;
-  border-top: 14px solid var(--green);
-}
-
-.arrB {
-  bottom: -13px;
-  border-bottom: 14px solid var(--green);
 }
 
 .track {
@@ -164,29 +156,46 @@ body {
   position: absolute;
   top: 10px;
   left: 0;
+  height: 100%;
   will-change: transform;
 }
 
+.spinDock {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 15px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.spinTriangle {
+  width: 30px;
+  height: auto;
+  display: block;
+}
+
 .scard {
-  width: 130px;
+  width: 280px;
   height: 170px;
   border-radius: 16px;
-  background: var(--bg2);
-  border: 1px solid rgba(168, 216, 50, 0.1);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  margin-right: 12px;
+  margin-right: 0;
 }
 
 .prizeImg {
-  width: 74px;
-  height: 74px;
+  width: 100%;
+  height: auto;
   object-fit: cover;
-  border-radius: 12px;
-  border: 1px solid rgba(168, 216, 50, 0.35);
+  border-radius: 0;
+  border: none;
 }
 
 .cn {
@@ -205,6 +214,7 @@ body {
 }
 
 .ct {
+  display: none;
   background: rgba(168, 216, 50, 0.1);
   border: 1px solid rgba(168, 216, 50, 0.25);
   border-radius: 10px;
@@ -242,16 +252,28 @@ body {
 }
 
 .spinBtn {
-  width: 324px;
-  padding: 18px;
-  background: var(--green);
-  border: none;
-  border-radius: 16px;
-  color: #1a1c18;
-  font-size: 17px;
-  font-weight: 800;
+  width: calc(100% - 44px);
+  padding: 16px 15px;
+  background: #608100;
+  border: 1px solid #bfff00;
+  border-radius: 24px;
+  color: #bfff00;
+  font-size: 16px;
+  font-weight: bolder;
   cursor: pointer;
   text-transform: uppercase;
+  font-family: "BOWLER", sans-serif;
+  text-shadow:
+    1px 1px 0 #75ba00,
+    1px -1px 0 #75ba00,
+    -1px 1px 0 #75ba00,
+    -1px -1px 0 #75ba00,
+    1px 0 0 #75ba00,
+    0 1px 0 #75ba00,
+    -1px 0 0 #75ba00,
+    0 -1px 0 #75ba00,
+    1px 1px 1px rgba(117, 186, 0, 0);
+  letter-spacing: 2px;
 }
 
 .spinBtn.used {
@@ -262,9 +284,9 @@ body {
 
 .tnote {
   font-size: 11px;
-  color: var(--text2);
+  color: var(--text);
   text-align: center;
-  padding: 10px 16px 16px;
+  padding: 0 16px 16px;
   line-height: 1.5;
 }
 
@@ -302,7 +324,7 @@ body {
 
 .rvisual {
   width: 100%;
-  height: 200px;
+  height: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -366,12 +388,9 @@ body {
 }
 
 .resultPrizeImg {
-  width: 100px;
-  height: 100px;
+  width: 100%;
+  height: auto;
   object-fit: cover;
-  border-radius: 18px;
-  border: 1px solid rgba(168, 216, 50, 0.4);
-  box-shadow: 0 0 24px rgba(168, 216, 50, 0.25);
 }
 
 .rtag {
@@ -383,17 +402,21 @@ body {
   font-weight: 700;
   color: var(--text);
   text-transform: uppercase;
+  display: none;
 }
 
 .ibox {
   width: 100%;
-  background: var(--bg2);
-  border: 1px solid var(--border);
   border-radius: 16px;
   padding: 16px;
-  font-size: 13px;
-  color: var(--text2);
-  line-height: 1.9;
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.3;
+  text-align: center;
+}
+
+.ibox > div {
+  margin-bottom: 10px;
 }
 
 .ibox span {
@@ -449,14 +472,17 @@ body {
   overflow-y: auto;
   padding: 16px 18px;
   font-size: 13px;
-  color: var(--text2);
+  color: var(--text);
   line-height: 1.9;
 }
 
 .pbody h3 {
   color: var(--green);
-  font-size: 13px;
+  font-size: 18px;
   margin: 14px 0 6px;
+  text-align: center;
+  text-transform: uppercase;
+  font-weight: bolder;
 }
 
 .pbody ul {
@@ -490,7 +516,7 @@ body {
 }
 
 .pcname {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text);
 }

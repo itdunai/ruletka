@@ -255,7 +255,80 @@ ss -ltnp | grep 3001
 
 Ожидаемо: процесс API слушает только `127.0.0.1:3001`, а внешний доступ идет через Nginx на 80/443.
 
-## 10. Полезные команды
+## 10. База: кто уже крутил рулетку и удаление спинов/призов по Telegram ID
+
+Подключение к БД (имя `ruletka` должно совпадать с тем, что в `DATABASE_URL`):
+
+```bash
+sudo -u postgres psql -d ruletka
+```
+
+**1) Все пользователи, у которых был хотя бы один спин** (сводка: `@username`, число спинов, последний спин):
+
+```sql
+SELECT u.id AS user_uuid,
+       u."telegramId",
+       u.username,
+       COUNT(s.id) AS spins_count,
+       MAX(s."spinAt") AS last_spin_at
+FROM "User" u
+INNER JOIN "Spin" s ON s."userId" = u.id
+GROUP BY u.id, u."telegramId", u.username
+ORDER BY last_spin_at DESC;
+```
+
+**2) Детально: каждый спин и выпавший приз** (для ревизии):
+
+```sql
+SELECT u."telegramId",
+       u.username,
+       s."spinAt",
+       p.title AS prize_title,
+       s.id AS spin_id
+FROM "User" u
+JOIN "Spin" s ON s."userId" = u.id
+JOIN "Prize" p ON p.id = s."prizeId"
+ORDER BY s."spinAt" DESC;
+```
+
+**3) Удалить все «результаты» пользователя по числовому Telegram ID**  
+Удаляются связанные записи: уведомления магазина → выигрыши → спины. Порядок важен из-за внешних ключей. Перед правкой сделайте бэкап БД; подставьте вместо `123456789` реальный `telegramId`.
+
+Сначала проверка, что пользователь найден:
+
+```sql
+SELECT id, "telegramId", username FROM "User" WHERE "telegramId" = 123456789;
+```
+
+Транзакция удаления (при необходимости вместо `COMMIT` выполните `ROLLBACK`):
+
+```sql
+BEGIN;
+
+DELETE FROM "ShopNotification"
+WHERE "winId" IN (
+  SELECT w.id FROM "Win" w
+  WHERE w."userId" = (SELECT id FROM "User" WHERE "telegramId" = 727055707)
+);
+
+DELETE FROM "Win"
+WHERE "userId" = (SELECT id FROM "User" WHERE "telegramId" = 727055707);
+
+DELETE FROM "Spin"
+WHERE "userId" = (SELECT id FROM "User" WHERE "telegramId" = 727055707);
+
+COMMIT;
+```
+
+После удаления спинов строка `User` остаётся — пользователь сможет снова открыть приложение и при желании крутить заново. Полное удаление учётки (редко нужно):
+
+```sql
+DELETE FROM "User" WHERE "telegramId" = 123456789;
+```
+
+Выполняйте только если перед этим уже удалены все `ShopNotification`, `Win` и `Spin` этого пользователя (как в блоке выше).
+
+## 11. Полезные команды
 
 ```bash
 pm2 logs ruletka-api
@@ -268,7 +341,7 @@ pm2 restart ruletka-bot
 curl https://api.yourdomain.ru/health
 ```
 
-## 11. Проверка безопасности после деплоя
+## 12. Проверка безопасности после деплоя
 
 1) Проверка разрешенного CORS origin:
 

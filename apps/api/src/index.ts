@@ -18,6 +18,7 @@ import { validateTelegramInitData } from "./telegram.js";
 const SPIN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const WIN_EXPIRATION_MS = 3 * 24 * 60 * 60 * 1000;
 const EXPIRATION_JOB_INTERVAL_MS = Number(process.env.EXPIRATION_JOB_INTERVAL_MS ?? 60_000);
+const DEMO_TELEGRAM_ID = 700000001;
 const adminToken = process.env.ADMIN_TOKEN ?? "";
 const operatorToken = process.env.OPERATOR_TOKEN ?? "";
 const shopChatId = process.env.SHOP_CHAT_ID ?? "";
@@ -34,6 +35,7 @@ const uploadDir = path.resolve(process.cwd(), process.env.UPLOAD_DIR ?? "uploads
 const uploadBaseUrl = process.env.UPLOAD_BASE_URL ?? "";
 const jwtSecret = process.env.JWT_SECRET ?? "";
 const accessTokenTtl = process.env.ACCESS_TOKEN_TTL ?? "7d";
+const shopOperatorUsername = process.env.SHOP_OPERATOR_USERNAME ?? "@snus_irk_operator";
 const CONTENT_KEYS = {
   promoTerms: "content.promo_terms",
   prizeTerms: "content.prize_terms"
@@ -223,43 +225,47 @@ function canSpin(lastSpinAt: Date | null): boolean {
   return Date.now() - lastSpinAt.getTime() >= SPIN_COOLDOWN_MS;
 }
 
+function isDemoUser(telegramId: number): boolean {
+  return telegramId === DEMO_TELEGRAM_ID;
+}
+
 function requireAdmin(request: { headers: Record<string, unknown> }) {
   if (!adminToken) {
-    throw app.httpErrors.internalServerError("ADMIN_TOKEN is not configured");
+    throw app.httpErrors.internalServerError("ADMIN_TOKEN не настроен");
   }
   const candidate = request.headers["x-admin-token"];
   if (candidate !== adminToken) {
-    throw app.httpErrors.unauthorized("Invalid admin token");
+    throw app.httpErrors.unauthorized("Неверный admin-токен");
   }
 }
 
 function requireOperator(request: { headers: Record<string, unknown> }) {
   if (!operatorToken) {
-    throw app.httpErrors.internalServerError("OPERATOR_TOKEN is not configured");
+    throw app.httpErrors.internalServerError("OPERATOR_TOKEN не настроен");
   }
   const candidate = request.headers["x-operator-token"];
   if (candidate !== operatorToken) {
-    throw app.httpErrors.unauthorized("Invalid operator token");
+    throw app.httpErrors.unauthorized("Неверный operator-токен");
   }
 }
 
 function requireUser(request: { headers: Record<string, unknown> }) {
   if (!jwtSecret) {
-    throw app.httpErrors.internalServerError("JWT_SECRET is not configured");
+    throw app.httpErrors.internalServerError("JWT_SECRET не настроен");
   }
   const authHeader = request.headers.authorization;
   if (typeof authHeader !== "string" || !authHeader.startsWith("Bearer ")) {
-    throw app.httpErrors.unauthorized("Missing Bearer token");
+    throw app.httpErrors.unauthorized("Отсутствует Bearer-токен");
   }
   const token = authHeader.slice("Bearer ".length).trim();
   try {
     const payload = jwt.verify(token, jwtSecret) as { userId: string; telegramId: number };
     if (!payload.userId || !payload.telegramId) {
-      throw new Error("Invalid token payload");
+      throw new Error("Некорректное содержимое токена");
     }
     return payload;
   } catch {
-    throw app.httpErrors.unauthorized("Invalid or expired token");
+    throw app.httpErrors.unauthorized("Токен недействителен или просрочен");
   }
 }
 
@@ -272,7 +278,7 @@ async function assertActivePrizePool(tx: Prisma.TransactionClient) {
     }
   });
   if (count === 0) {
-    throw app.httpErrors.badRequest("At least one active prize with positive weight is required");
+    throw app.httpErrors.badRequest("Нужен хотя бы один активный приз с положительным весом");
   }
 }
 
@@ -296,6 +302,76 @@ async function createNotificationLog(input: {
   });
 }
 
+function formatWinReminderMessage(input: {
+  prizeTitle: string;
+  username: string | null;
+  telegramId: bigint;
+  createdAt: Date;
+  expiresAt: Date;
+}) {
+  const userNameLine = input.username ? `@${input.username}` : "не указан";
+  return [
+    `🎁 Ваш приз: ${input.prizeTitle}`,
+    "",
+    `👨‍💼️ Для получения приза перешлите это сообщение: ${shopOperatorUsername}, до оформления заказа!`,
+    `⚙️ Ваш username: ${userNameLine}`,
+    `🆔 Ваш id: ${input.telegramId.toString()}`,
+    "🎊 Забрать приз можно в течение 3 дней",
+    `🗓 Сегодня: ${input.createdAt.toLocaleString("ru-RU")}, забрать приз можно до: ${input.expiresAt.toLocaleString("ru-RU")}`
+  ].join("\n");
+}
+
+async function sendWinReminderToUser(input: {
+  winId: string;
+  userTelegramId: bigint;
+  username: string | null;
+  prizeTitle: string;
+  createdAt: Date;
+  expiresAt: Date;
+}) {
+  if (!botToken) {
+    throw app.httpErrors.internalServerError("BOT_TOKEN не настроен");
+  }
+  const message = formatWinReminderMessage({
+    prizeTitle: input.prizeTitle,
+    username: input.username,
+    telegramId: input.userTelegramId,
+    createdAt: input.createdAt,
+    expiresAt: input.expiresAt
+  });
+  const telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: input.userTelegramId.toString(),
+      text: message
+    })
+  });
+  const telegramData = (await telegramResponse.json()) as {
+    ok?: boolean;
+    description?: string;
+    result?: { message_id?: number };
+  };
+  if (!telegramResponse.ok || !telegramData.ok) {
+    await createNotificationLog({
+      winId: input.winId,
+      action: ShopNotificationAction.send_to_shop,
+      status: ShopNotificationStatus.failed,
+      sentToChatId: input.userTelegramId.toString(),
+      errorText: telegramData.description ?? "неизвестная ошибка"
+    });
+    throw app.httpErrors.badGateway(`Не удалось отправить сообщение в чат пользователя: ${telegramData.description ?? "неизвестная ошибка"}`);
+  }
+  await createNotificationLog({
+    winId: input.winId,
+    action: ShopNotificationAction.send_to_shop,
+    status: ShopNotificationStatus.sent,
+    sentToChatId: input.userTelegramId.toString(),
+    messageId: telegramData.result?.message_id ? String(telegramData.result.message_id) : undefined
+  });
+  return { messageId: telegramData.result?.message_id ?? null };
+}
+
 async function expireActiveWins() {
   const now = new Date();
   const result = await prisma.win.updateMany({
@@ -315,7 +391,7 @@ async function isUserSubscribedToRequiredChannels(telegramId: number): Promise<b
     return true;
   }
   if (!botToken) {
-    throw app.httpErrors.internalServerError("BOT_TOKEN is required for subscription checks");
+    throw app.httpErrors.internalServerError("Для проверки подписок нужен BOT_TOKEN");
   }
 
   for (const channel of requiredChannels) {
@@ -392,7 +468,7 @@ app.post("/admin/prizes", async (request) => {
   requireAdmin(request);
   const parsed = adminPrizeCreateSchema.safeParse(request.body);
   if (!parsed.success) {
-    throw app.httpErrors.badRequest("Invalid prize payload");
+    throw app.httpErrors.badRequest("Некорректные данные приза");
   }
 
   const created = await prisma.$transaction(async (tx) => {
@@ -419,16 +495,16 @@ app.post("/admin/prizes/:prizeId/image-upload", async (request) => {
   const params = uploadPathSchema.parse(request.params);
   const file = await request.file();
   if (!file) {
-    throw app.httpErrors.badRequest("File is required");
+    throw app.httpErrors.badRequest("Нужно передать файл");
   }
   if (!file.mimetype.startsWith("image/")) {
-    throw app.httpErrors.badRequest("Only image files are allowed");
+    throw app.httpErrors.badRequest("Разрешены только файлы изображений");
   }
 
   const fileBuffer = await file.toBuffer();
   const detected = await fileTypeFromBuffer(fileBuffer);
   if (!detected || !detected.mime.startsWith("image/")) {
-    throw app.httpErrors.badRequest("Invalid image file content");
+    throw app.httpErrors.badRequest("Некорректное содержимое файла изображения");
   }
   const ext = detected.ext || (file.filename.includes(".") ? file.filename.split(".").pop() : "bin");
   const safeExt = (ext || "bin").replace(/[^a-zA-Z0-9]/g, "").toLowerCase() || "bin";
@@ -451,7 +527,7 @@ app.delete("/admin/prizes/:prizeId/image", async (request) => {
   const params = uploadPathSchema.parse(request.params);
   const current = await prisma.prize.findUnique({ where: { id: params.prizeId } });
   if (!current) {
-    throw app.httpErrors.notFound("Prize not found");
+    throw app.httpErrors.notFound("Приз не найден");
   }
 
   if (current.imageUrl?.startsWith("/uploads/")) {
@@ -476,7 +552,7 @@ app.patch("/admin/prizes/:prizeId", async (request) => {
   const params = z.object({ prizeId: z.string().min(1) }).parse(request.params);
   const parsed = adminPrizeUpdateSchema.safeParse(request.body);
   if (!parsed.success) {
-    throw app.httpErrors.badRequest("Invalid prize payload");
+    throw app.httpErrors.badRequest("Некорректные данные приза");
   }
 
   const data: {
@@ -526,7 +602,7 @@ app.patch("/admin/content/texts", async (request) => {
   requireAdmin(request);
   const parsed = adminContentUpdateSchema.safeParse(request.body);
   if (!parsed.success) {
-    throw app.httpErrors.badRequest("Invalid content payload");
+    throw app.httpErrors.badRequest("Некорректные данные контента");
   }
 
   await prisma.$transaction([
@@ -548,7 +624,7 @@ app.patch("/admin/content/texts", async (request) => {
 app.post("/auth/telegram", async (request) => {
   const parsed = authSchema.safeParse(request.body);
   if (!parsed.success) {
-    throw app.httpErrors.badRequest("Invalid auth payload");
+    throw app.httpErrors.badRequest("Некорректные данные авторизации");
   }
 
   // TODO: validate Telegram initData signature on production.
@@ -562,18 +638,18 @@ app.post("/auth/telegram", async (request) => {
 
   if (hasInitData) {
     if (!authBotToken) {
-      throw app.httpErrors.internalServerError("TELEGRAM_BOT_TOKEN is not configured");
+      throw app.httpErrors.internalServerError("TELEGRAM_BOT_TOKEN не настроен");
     }
     const validated = validateTelegramInitData(parsed.data.initData, authBotToken);
     if (!validated.user?.id) {
-      throw app.httpErrors.badRequest("initData has no user id");
+      throw app.httpErrors.badRequest("В initData отсутствует user id");
     }
     telegramId = validated.user.id;
     username = validated.user.username ?? username;
     firstName = validated.user.first_name ?? firstName;
     lastName = validated.user.last_name ?? lastName;
   } else if (!telegramId) {
-    throw app.httpErrors.badRequest("telegramId is required when initData is missing");
+    throw app.httpErrors.badRequest("Когда initData отсутствует, нужен telegramId");
   }
 
   await ensureDefaultPrizes();
@@ -596,7 +672,7 @@ app.post("/auth/telegram", async (request) => {
     orderBy: { spinAt: "desc" }
   });
   if (!jwtSecret) {
-    throw app.httpErrors.internalServerError("JWT_SECRET is not configured");
+    throw app.httpErrors.internalServerError("JWT_SECRET не настроен");
   }
   const accessToken = jwt.sign(
     {
@@ -615,8 +691,8 @@ app.post("/auth/telegram", async (request) => {
       firstName,
       lastName
     },
-    canSpin: canSpin(lastSpin?.spinAt ?? null),
-    nextSpinAt: getNextSpinAt(lastSpin?.spinAt ?? null)
+    canSpin: isDemoUser(telegramId) ? true : canSpin(lastSpin?.spinAt ?? null),
+    nextSpinAt: isDemoUser(telegramId) ? null : getNextSpinAt(lastSpin?.spinAt ?? null)
   };
 });
 
@@ -625,7 +701,7 @@ app.get("/app/state", async (request) => {
   await ensureDefaultPrizes();
   const user = await prisma.user.findUnique({ where: { id: auth.userId } });
   if (!user) {
-    throw app.httpErrors.notFound("User not found");
+    throw app.httpErrors.notFound("Пользователь не найден");
   }
   const now = new Date();
 
@@ -655,8 +731,8 @@ app.get("/app/state", async (request) => {
   ]);
 
   return {
-    canSpin: canSpin(lastSpin?.spinAt ?? null),
-    nextSpinAt: getNextSpinAt(lastSpin?.spinAt ?? null),
+    canSpin: isDemoUser(auth.telegramId) ? true : canSpin(lastSpin?.spinAt ?? null),
+    nextSpinAt: isDemoUser(auth.telegramId) ? null : getNextSpinAt(lastSpin?.spinAt ?? null),
     wins: wins.map((win) => ({
       id: win.id,
       prizeId: win.prizeId,
@@ -682,11 +758,13 @@ app.post("/spin", async (request) => {
   await ensureDefaultPrizes();
   const user = await prisma.user.findUnique({ where: { id: auth.userId } });
   if (!user) {
-    throw app.httpErrors.notFound("User not found");
+    throw app.httpErrors.notFound("Пользователь не найден");
   }
-  const isSubscribed = await isUserSubscribedToRequiredChannels(auth.telegramId);
-  if (!isSubscribed) {
-    throw app.httpErrors.forbidden("Subscription to required channels is missing");
+  if (!isDemoUser(auth.telegramId)) {
+    const isSubscribed = await isUserSubscribedToRequiredChannels(auth.telegramId);
+    if (!isSubscribed) {
+      throw app.httpErrors.forbidden("Нет подписки на обязательные каналы");
+    }
   }
   const now = new Date();
 
@@ -697,8 +775,8 @@ app.post("/spin", async (request) => {
     orderBy: { spinAt: "desc" }
   });
 
-  if (!canSpin(lastSpin?.spinAt ?? null)) {
-    throw app.httpErrors.tooManyRequests("Spin is available only once per week");
+  if (!isDemoUser(auth.telegramId) && !canSpin(lastSpin?.spinAt ?? null)) {
+    throw app.httpErrors.tooManyRequests("Крутить можно только один раз в неделю");
   }
 
   const dbPrizes = await prisma.prize.findMany({
@@ -750,12 +828,28 @@ app.post("/spin", async (request) => {
     });
   }
 
+  let reminderSent = false;
+  try {
+    await sendWinReminderToUser({
+      winId: win.id,
+      userTelegramId: user.telegramId,
+      username: user.username,
+      prizeTitle: prize.title,
+      createdAt: now,
+      expiresAt
+    });
+    reminderSent = true;
+  } catch (error) {
+    app.log.error({ err: error, winId: win.id }, "Failed to send win reminder to user");
+  }
+
   return {
     winId: win.id,
     prize,
     createdAt: now,
     expiresAt,
-    nextSpinAt: getNextSpinAt(now)
+    nextSpinAt: getNextSpinAt(now),
+    reminderSent
   };
 });
 
@@ -764,7 +858,7 @@ app.post("/wins/:winId/send-to-shop", async (request) => {
   const auth = requireUser(request);
   const user = await prisma.user.findUnique({ where: { id: auth.userId } });
   if (!user) {
-    throw app.httpErrors.notFound("User not found");
+    throw app.httpErrors.notFound("Пользователь не найден");
   }
   const win = await prisma.win.findFirst({
     where: {
@@ -773,24 +867,17 @@ app.post("/wins/:winId/send-to-shop", async (request) => {
     }
   });
   if (!win) {
-    throw app.httpErrors.notFound("Win not found");
+    throw app.httpErrors.notFound("Выигрыш не найден");
   }
   if (win.status !== WinStatus.active) {
-    throw app.httpErrors.badRequest("Win is not active");
+    throw app.httpErrors.badRequest("Выигрыш неактивен");
   }
   if (win.expiresAt.getTime() <= Date.now()) {
     await prisma.win.update({
       where: { id: win.id },
       data: { status: WinStatus.expired }
     });
-    throw app.httpErrors.badRequest("Win is expired");
-  }
-
-  if (!botToken) {
-    throw app.httpErrors.internalServerError("BOT_TOKEN is not configured");
-  }
-  if (!shopChatId) {
-    throw app.httpErrors.internalServerError("SHOP_CHAT_ID is not configured");
+    throw app.httpErrors.badRequest("Срок действия выигрыша истек");
   }
 
   const winWithPrize = await prisma.win.findUnique({
@@ -798,60 +885,17 @@ app.post("/wins/:winId/send-to-shop", async (request) => {
     include: { prize: true, user: true }
   });
   if (!winWithPrize) {
-    throw app.httpErrors.notFound("Win not found");
+    throw app.httpErrors.notFound("Выигрыш не найден");
   }
-
-  const username = winWithPrize.user.username ? `@${winWithPrize.user.username}` : "без username";
-  const message = [
-    "🎯 Новый выигрыш для обработки",
-    "",
-    "👤 Клиент",
-    `• Username: ${username}`,
-    `• Telegram ID: ${winWithPrize.user.telegramId.toString()}`,
-    "",
-    "🎁 Приз",
-    `• ${winWithPrize.prize.title}`,
-    "",
-    "⏳ Срок действия",
-    `• До: ${winWithPrize.expiresAt.toLocaleString("ru-RU")}`,
-    "",
-    "🧾 Win ID",
-    `• ${winWithPrize.id}`
-  ].join("\n");
-
-  const telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: shopChatId,
-      text: message
-    })
-  });
-  const telegramData = (await telegramResponse.json()) as {
-    ok?: boolean;
-    description?: string;
-    result?: { message_id?: number };
-  };
-  if (!telegramResponse.ok || !telegramData.ok) {
-    await createNotificationLog({
-      winId: win.id,
-      action: ShopNotificationAction.send_to_shop,
-      status: ShopNotificationStatus.failed,
-      sentToChatId: shopChatId,
-      errorText: telegramData.description ?? "unknown error"
-    });
-    throw app.httpErrors.badGateway(`Failed to send message to shop chat: ${telegramData.description ?? "unknown error"}`);
-  }
-
-  await createNotificationLog({
+  const sent = await sendWinReminderToUser({
     winId: win.id,
-    action: ShopNotificationAction.send_to_shop,
-    status: ShopNotificationStatus.sent,
-    sentToChatId: shopChatId,
-    messageId: telegramData.result?.message_id ? String(telegramData.result.message_id) : undefined
+    userTelegramId: winWithPrize.user.telegramId,
+    username: winWithPrize.user.username,
+    prizeTitle: winWithPrize.prize.title,
+    createdAt: winWithPrize.createdAt,
+    expiresAt: winWithPrize.expiresAt
   });
-
-  return { ok: true, message: "Prize sent to shop operator chat", messageId: telegramData.result?.message_id ?? null };
+  return { ok: true, message: "Сообщение с напоминанием о призе отправлено в чат пользователя", messageId: sent.messageId };
 });
 
 app.post("/operator/wins/:winId/claim", async (request) => {
@@ -863,17 +907,17 @@ app.post("/operator/wins/:winId/claim", async (request) => {
     include: { prize: true, user: true }
   });
   if (!win) {
-    throw app.httpErrors.notFound("Win not found");
+    throw app.httpErrors.notFound("Выигрыш не найден");
   }
   if (win.status !== WinStatus.active) {
-    throw app.httpErrors.badRequest("Only active win can be claimed");
+    throw app.httpErrors.badRequest("Подтвердить можно только активный выигрыш");
   }
   if (win.expiresAt.getTime() <= Date.now()) {
     await prisma.win.update({
       where: { id: win.id },
       data: { status: WinStatus.expired }
     });
-    throw app.httpErrors.badRequest("Win is expired");
+    throw app.httpErrors.badRequest("Срок действия выигрыша истек");
   }
 
   const updated = await prisma.win.update({
@@ -898,10 +942,10 @@ app.post("/operator/wins/:winId/reject", async (request) => {
   const body = operatorWinActionSchema.parse(request.body ?? {});
   const win = await prisma.win.findUnique({ where: { id: params.winId } });
   if (!win) {
-    throw app.httpErrors.notFound("Win not found");
+    throw app.httpErrors.notFound("Выигрыш не найден");
   }
   if (win.status !== WinStatus.active) {
-    throw app.httpErrors.badRequest("Only active win can be rejected");
+    throw app.httpErrors.badRequest("Отклонить можно только активный выигрыш");
   }
 
   const updated = await prisma.win.update({
