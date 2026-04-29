@@ -360,12 +360,11 @@ export function App() {
     }
   }
 
-  async function sendToShop() {
-    if (!spinResult) return;
+  async function sendWinToShop(winId: string) {
     setError("");
     setLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/wins/${spinResult.winId}/send-to-shop`, {
+      const response = await fetch(`${API_BASE_URL}/wins/${winId}/send-to-shop`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -384,6 +383,11 @@ export function App() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function sendToShop() {
+    if (!spinResult) return;
+    await sendWinToShop(spinResult.winId);
   }
 
   if (adminMode) {
@@ -559,7 +563,14 @@ export function App() {
                         <div className="pcname">{win.prizeTitle}</div>
                         <div className="pcexp">До {new Date(win.expiresAt).toLocaleString("ru-RU")}</div>
                       </div>
-                      <div className="pcval">{winStatusLabel(win.status)}</div>
+                      <div className="pcmeta">
+                        <div className="pcval">{winStatusLabel(win.status)}</div>
+                        {win.status === "active" ? (
+                          <button className="pcResendBtn" onClick={() => void sendWinToShop(win.id)} disabled={loading}>
+                            Отправить повторно
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                   ))
                 )}

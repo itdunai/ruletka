@@ -801,12 +801,22 @@ app.post("/wins/:winId/send-to-shop", async (request) => {
     throw app.httpErrors.notFound("Win not found");
   }
 
+  const username = winWithPrize.user.username ? `@${winWithPrize.user.username}` : "без username";
   const message = [
-    "Новый приз для обработки",
-    `Пользователь: @${winWithPrize.user.username ?? "no_username"} (id: ${winWithPrize.user.telegramId.toString()})`,
-    `Приз: ${winWithPrize.prize.title}`,
-    `Срок до: ${winWithPrize.expiresAt.toLocaleString("ru-RU")}`,
-    `Win ID: ${winWithPrize.id}`
+    "🎯 Новый выигрыш для обработки",
+    "",
+    "👤 Клиент",
+    `• Username: ${username}`,
+    `• Telegram ID: ${winWithPrize.user.telegramId.toString()}`,
+    "",
+    "🎁 Приз",
+    `• ${winWithPrize.prize.title}`,
+    "",
+    "⏳ Срок действия",
+    `• До: ${winWithPrize.expiresAt.toLocaleString("ru-RU")}`,
+    "",
+    "🧾 Win ID",
+    `• ${winWithPrize.id}`
   ].join("\n");
 
   const telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
