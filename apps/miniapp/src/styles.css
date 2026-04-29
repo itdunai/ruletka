@@ -519,7 +519,7 @@ body {
 }
 
 .pcname {
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 700;
   color: var(--text);
 }

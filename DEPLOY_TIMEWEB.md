@@ -299,10 +299,8 @@ sudo certbot --nginx -d wheel.yourdomain.ru -d api.yourdomain.ru
 2. Если пользователь не подписан, бот просит подписаться.
 3. После подписки `/check` -> кнопка открытия Mini App.
 4. В Mini App нажать "Крутить" -> получить приз.
-5. Нажать "Отправить оператору" -> сообщение появляется в операторском чате.
-6. В чате оператора выполнить:
-   - `/claim_win <win_id>` или
-   - `/reject_win <win_id> причина`
+5. Сообщение о призе приходит пользователю в чат с ботом.
+6. При необходимости нажать "Отправить повторно" в разделе "Мои призы".
 
 ### 8.1 База: кто уже крутил рулетку и удаление спинов/призов по Telegram ID
 
@@ -373,6 +371,29 @@ COMMIT;
 
 ```sql
 DELETE FROM "User" WHERE "telegramId" = 123456789;
+```
+
+**4) Полностью обнулить данные по результатам и пользователям**  
+Удаляются все записи из `ShopNotification`, `Win`, `Spin` и `User`. Используйте только для полного сброса (например, перед новым сезоном), заранее сделав бэкап БД.
+
+```sql
+BEGIN;
+
+DELETE FROM "ShopNotification";
+DELETE FROM "Win";
+DELETE FROM "Spin";
+DELETE FROM "User";
+
+COMMIT;
+```
+
+Проверка, что таблицы пустые:
+
+```sql
+SELECT COUNT(*) AS users_count FROM "User";
+SELECT COUNT(*) AS spins_count FROM "Spin";
+SELECT COUNT(*) AS wins_count FROM "Win";
+SELECT COUNT(*) AS notifications_count FROM "ShopNotification";
 ```
 
 ## 9. Полезные API команды для админа

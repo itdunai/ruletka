@@ -43,6 +43,6 @@ pm2 logs ruletka-api
 pm2 logs ruletka-bot
 ```
 
-## 6) Админ: просмотр крутивших и сброс по `telegramId`
+## 6) Админ: просмотр крутивших и сброс
 
-Список SQL-команд по шагам (подключение `psql`, выборки, удаление по Telegram ID) описан в **`DEPLOY_TIMEWEB.md`**, подраздел **8.1**. На Beget — то же самое в **`DEPLOY_BEGET.md`**, раздел **10**.
+Список SQL-команд по шагам (подключение `psql`, выборки, удаление по Telegram ID, полное обнуление `ShopNotification`/`Win`/`Spin`/`User`) описан в **`DEPLOY_TIMEWEB.md`**, подраздел **8.1**. На Beget — то же самое в **`DEPLOY_BEGET.md`**, раздел **10**.

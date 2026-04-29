@@ -308,14 +308,14 @@ BEGIN;
 DELETE FROM "ShopNotification"
 WHERE "winId" IN (
   SELECT w.id FROM "Win" w
-  WHERE w."userId" = (SELECT id FROM "User" WHERE "telegramId" = 727055707)
+  WHERE w."userId" = (SELECT id FROM "User" WHERE "telegramId" = 123456789)
 );
 
 DELETE FROM "Win"
-WHERE "userId" = (SELECT id FROM "User" WHERE "telegramId" = 727055707);
+WHERE "userId" = (SELECT id FROM "User" WHERE "telegramId" = 123456789);
 
 DELETE FROM "Spin"
-WHERE "userId" = (SELECT id FROM "User" WHERE "telegramId" = 727055707);
+WHERE "userId" = (SELECT id FROM "User" WHERE "telegramId" = 123456789);
 
 COMMIT;
 ```
@@ -328,6 +328,29 @@ DELETE FROM "User" WHERE "telegramId" = 123456789;
 
 Выполняйте только если перед этим уже удалены все `ShopNotification`, `Win` и `Spin` этого пользователя (как в блоке выше).
 
+**4) Полностью обнулить данные по результатам и пользователям**  
+Удаляются все записи из `ShopNotification`, `Win`, `Spin` и `User`. Используйте только для полного сброса (например, перед новым сезоном), заранее сделав бэкап БД.
+
+```sql
+BEGIN;
+
+DELETE FROM "ShopNotification";
+DELETE FROM "Win";
+DELETE FROM "Spin";
+DELETE FROM "User";
+
+COMMIT;
+```
+
+После выполнения можно проверить, что таблицы пустые:
+
+```sql
+SELECT COUNT(*) AS users_count FROM "User";
+SELECT COUNT(*) AS spins_count FROM "Spin";
+SELECT COUNT(*) AS wins_count FROM "Win";
+SELECT COUNT(*) AS notifications_count FROM "ShopNotification";
+```
+
 ## 11. Полезные команды
 
 ```bash
@@ -336,6 +359,13 @@ pm2 logs ruletka-bot
 pm2 restart ruletka-api
 pm2 restart ruletka-bot
 ```
+```bash
+cd /var/www/ruletka
+git pull
+npm run build --workspace @ruletka/miniapp
+sudo nginx -t && sudo systemctl reload nginx
+```
+
 
 ```bash
 curl https://api.yourdomain.ru/health

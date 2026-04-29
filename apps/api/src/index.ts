@@ -332,6 +332,8 @@ async function sendWinReminderToUser(input: {
   if (!botToken) {
     throw app.httpErrors.internalServerError("BOT_TOKEN не настроен");
   }
+  const isDemoNotificationTarget = input.userTelegramId.toString() === String(DEMO_TELEGRAM_ID);
+  const targetChatId = isDemoNotificationTarget && shopChatId ? shopChatId : input.userTelegramId.toString();
   const message = formatWinReminderMessage({
     prizeTitle: input.prizeTitle,
     username: input.username,
@@ -343,7 +345,7 @@ async function sendWinReminderToUser(input: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      chat_id: input.userTelegramId.toString(),
+      chat_id: targetChatId,
       text: message
     })
   });
@@ -357,7 +359,7 @@ async function sendWinReminderToUser(input: {
       winId: input.winId,
       action: ShopNotificationAction.send_to_shop,
       status: ShopNotificationStatus.failed,
-      sentToChatId: input.userTelegramId.toString(),
+      sentToChatId: targetChatId,
       errorText: telegramData.description ?? "неизвестная ошибка"
     });
     throw app.httpErrors.badGateway(`Не удалось отправить сообщение в чат пользователя: ${telegramData.description ?? "неизвестная ошибка"}`);
@@ -366,7 +368,7 @@ async function sendWinReminderToUser(input: {
     winId: input.winId,
     action: ShopNotificationAction.send_to_shop,
     status: ShopNotificationStatus.sent,
-    sentToChatId: input.userTelegramId.toString(),
+    sentToChatId: targetChatId,
     messageId: telegramData.result?.message_id ? String(telegramData.result.message_id) : undefined
   });
   return { messageId: telegramData.result?.message_id ?? null };
