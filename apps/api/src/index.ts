@@ -18,6 +18,7 @@ import { validateTelegramInitData } from "./telegram.js";
 const SPIN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const WIN_EXPIRATION_MS = 3 * 24 * 60 * 60 * 1000;
 const EXPIRATION_JOB_INTERVAL_MS = Number(process.env.EXPIRATION_JOB_INTERVAL_MS ?? 60_000);
+const SPIN_READY_REMINDER_INTERVAL_MS = Number(process.env.SPIN_READY_REMINDER_INTERVAL_MS ?? 300_000);
 const DEMO_TELEGRAM_ID = 700000001;
 const adminToken = process.env.ADMIN_TOKEN ?? "";
 const operatorToken = process.env.OPERATOR_TOKEN ?? "";
@@ -36,6 +37,8 @@ const uploadBaseUrl = process.env.UPLOAD_BASE_URL ?? "";
 const jwtSecret = process.env.JWT_SECRET ?? "";
 const accessTokenTtl = process.env.ACCESS_TOKEN_TTL ?? "7d";
 const shopOperatorUsername = process.env.SHOP_OPERATOR_USERNAME ?? "@snus_irk_operator";
+const spinReadyReminderText =
+  process.env.SPIN_READY_REMINDER_TEXT?.trim() || "🎯 Доступна новая попытка! Возвращайтесь крутить колесо.";
 const CONTENT_KEYS = {
   promoTerms: "content.promo_terms",
   prizeTerms: "content.prize_terms"
@@ -374,6 +377,30 @@ async function sendWinReminderToUser(input: {
   return { messageId: telegramData.result?.message_id ?? null };
 }
 
+async function sendSpinReadyReminderToUser(input: { userTelegramId: bigint }) {
+  if (!botToken) {
+    throw app.httpErrors.internalServerError("BOT_TOKEN не настроен");
+  }
+  const chatId = input.userTelegramId.toString();
+  const telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: spinReadyReminderText
+    })
+  });
+  const telegramData = (await telegramResponse.json()) as {
+    ok?: boolean;
+    description?: string;
+  };
+  if (!telegramResponse.ok || !telegramData.ok) {
+    throw app.httpErrors.badGateway(
+      `Не удалось отправить уведомление о новой попытке: ${telegramData.description ?? "неизвестная ошибка"}`
+    );
+  }
+}
+
 async function expireActiveWins() {
   const now = new Date();
   const result = await prisma.win.updateMany({
@@ -385,6 +412,63 @@ async function expireActiveWins() {
   });
   if (result.count > 0) {
     app.log.info({ expiredCount: result.count }, "Expired stale wins");
+  }
+}
+
+async function notifyUsersSpinReady() {
+  if (!botToken) {
+    return;
+  }
+  const users = await prisma.user.findMany({
+    where: {
+      spins: { some: {} }
+    },
+    select: {
+      id: true,
+      telegramId: true,
+      cooldownReminderSpinAt: true,
+      spins: {
+        select: { spinAt: true },
+        orderBy: { spinAt: "desc" },
+        take: 1
+      }
+    }
+  });
+
+  for (const user of users) {
+    if (user.telegramId === BigInt(DEMO_TELEGRAM_ID)) {
+      continue;
+    }
+    const lastSpinAt = user.spins[0]?.spinAt;
+    if (!lastSpinAt) {
+      continue;
+    }
+    const isCooldownComplete = Date.now() - lastSpinAt.getTime() >= SPIN_COOLDOWN_MS;
+    if (!isCooldownComplete) {
+      continue;
+    }
+    if (user.cooldownReminderSpinAt && user.cooldownReminderSpinAt.getTime() >= lastSpinAt.getTime()) {
+      continue;
+    }
+
+    try {
+      await sendSpinReadyReminderToUser({ userTelegramId: user.telegramId });
+      const updated = await prisma.user.updateMany({
+        where: {
+          id: user.id,
+          OR: [{ cooldownReminderSpinAt: null }, { cooldownReminderSpinAt: { lt: lastSpinAt } }]
+        },
+        data: {
+          cooldownReminderSpinAt: lastSpinAt,
+          cooldownReminderSentAt: new Date()
+        }
+      });
+      if (updated.count > 0) {
+        app.log.info({ userId: user.id }, "Spin-ready reminder sent");
+      }
+    } catch (error) {
+      app.log.warn({ err: error, userId: user.id }, "Failed to send spin-ready reminder");
+    }
   }
 }
 
@@ -812,6 +896,14 @@ app.post("/spin", async (request) => {
     }
   });
 
+  await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      cooldownReminderSpinAt: null,
+      cooldownReminderSentAt: null
+    }
+  });
+
   const win = await prisma.win.create({
     data: {
       userId: user.id,
@@ -981,6 +1073,9 @@ const host = process.env.API_HOST ?? "0.0.0.0";
 const expirationTimer = setInterval(() => {
   void expireActiveWins().catch((error) => app.log.error({ err: error }, "Expiration job failed"));
 }, EXPIRATION_JOB_INTERVAL_MS);
+const spinReadyReminderTimer = setInterval(() => {
+  void notifyUsersSpinReady().catch((error) => app.log.error({ err: error }, "Spin-ready reminder job failed"));
+}, SPIN_READY_REMINDER_INTERVAL_MS);
 
 app.listen({ port, host }).catch((error) => {
   app.log.error(error);
@@ -988,9 +1083,11 @@ app.listen({ port, host }).catch((error) => {
 });
 
 void expireActiveWins().catch((error) => app.log.error({ err: error }, "Initial expiration sync failed"));
+void notifyUsersSpinReady().catch((error) => app.log.error({ err: error }, "Initial spin-ready reminder sync failed"));
 
 const shutdown = async (signal: string) => {
   clearInterval(expirationTimer);
+  clearInterval(spinReadyReminderTimer);
   app.log.info({ signal }, "Shutting down API");
   await prisma.$disconnect();
   process.exit(0);

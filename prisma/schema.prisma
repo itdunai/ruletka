@@ -39,6 +39,8 @@ model User {
   username   String?
   firstName  String?
   lastName   String?
+  cooldownReminderSpinAt DateTime?
+  cooldownReminderSentAt DateTime?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
   spins      Spin[]
