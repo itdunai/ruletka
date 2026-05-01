@@ -19,24 +19,38 @@ function escapeAttr(text: string) {
   return text.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
 }
 
+function splitChannelTitleAndUrl(segment: string): { title: string; url: string } | null {
+  const pipeIdx = segment.indexOf("|||");
+  if (pipeIdx !== -1) {
+    const title = segment.slice(0, pipeIdx).trim();
+    const url = segment.slice(pipeIdx + 3).trim();
+    if (title && url) return { title, url };
+  }
+  const hashIdx = segment.indexOf("###");
+  if (hashIdx !== -1) {
+    const title = segment.slice(0, hashIdx).trim();
+    const url = segment.slice(hashIdx + 3).trim();
+    if (title && url) return { title, url };
+  }
+  return null;
+}
+
 function parseRequiredChannelLinks(raw: string | undefined): Array<{ title: string; url: string }> {
   if (!raw?.trim()) return [];
   return raw
     .split("@@@")
     .map((segment) => segment.trim())
     .filter(Boolean)
-    .map((segment) => {
-      const idx = segment.indexOf("###");
-      if (idx === -1) return null;
-      const title = segment.slice(0, idx).trim();
-      const url = segment.slice(idx + 3).trim();
-      if (!title || !url) return null;
-      return { title, url };
-    })
+    .map((segment) => splitChannelTitleAndUrl(segment))
     .filter((item): item is { title: string; url: string } => Boolean(item));
 }
 
 const requiredChannelLinkItems = parseRequiredChannelLinks(process.env.REQUIRED_CHANNELS_LINKS);
+
+console.info(
+  "[ruletka-bot] REQUIRED_CHANNELS_LINKS:",
+  requiredChannelLinkItems.length > 0 ? `${requiredChannelLinkItems.length} entries (titles with links)` : "empty or unparsed — check .env (use ||| not ### unless value is in double quotes)"
+);
 
 function formatRequiredChannelsListHtml(): string {
   if (requiredChannelLinkItems.length > 0) {
