@@ -1,4 +1,5 @@
 import "dotenv/config";
+import type { Context } from "telegraf";
 import { Markup, Telegraf } from "telegraf";
 
 const token = process.env.BOT_TOKEN;
@@ -55,6 +56,15 @@ if (!token) {
 
 const bot = new Telegraf(token);
 
+async function safeReply(ctx: Context, text: string, extra?: Parameters<Context["reply"]>[1]) {
+  try {
+    await ctx.reply(text, extra);
+  } catch (error) {
+    const description = error instanceof Error ? error.message : String(error);
+    console.warn("[ruletka-bot] reply failed", { chatId: ctx.chat?.id, description });
+  }
+}
+
 async function isSubscribedToAllRequiredChannels(telegramUserId: number): Promise<boolean> {
   if (requiredChannels.length === 0) {
     return true;
@@ -103,7 +113,8 @@ bot.start(async (ctx) => {
   const subscribed = await isSubscribedToAllRequiredChannels(ctx.from.id);
 
   if (!subscribed) {
-    await ctx.reply(
+    await safeReply(
+      ctx,
       [
         "Перед запуском приложения нужно подписаться на каналы:",
         "",
@@ -116,13 +127,14 @@ bot.start(async (ctx) => {
     return;
   }
 
-  await ctx.reply("Доступ открыт. Можно запускать мини-приложение.", openMiniAppKeyboard());
+  await safeReply(ctx, "Доступ открыт. Можно запускать мини-приложение.", openMiniAppKeyboard());
 });
 
 bot.command("check", async (ctx) => {
   const subscribed = await isSubscribedToAllRequiredChannels(ctx.from.id);
   if (!subscribed) {
-    await ctx.reply(
+    await safeReply(
+      ctx,
       [
         "Подписка пока не подтверждена. Проверьте каналы и попробуйте снова.",
         "",
@@ -132,37 +144,42 @@ bot.command("check", async (ctx) => {
     );
     return;
   }
-  await ctx.reply("Подписка подтверждена.", openMiniAppKeyboard());
+  await safeReply(ctx, "Подписка подтверждена.", openMiniAppKeyboard());
 });
 
 bot.command("claim_win", async (ctx) => {
   const [command, winId, ...reasonParts] = ctx.message.text.trim().split(" ");
   if (command !== "/claim_win" || !winId) {
-    await ctx.reply("Формат: /claim_win <win_id> [комментарий]");
+    await safeReply(ctx, "Формат: /claim_win <win_id> [комментарий]");
     return;
   }
   try {
     const reason = reasonParts.join(" ").trim() || undefined;
     const result = await operatorWinAction("claim", winId, reason);
-    await ctx.reply(`Приз подтвержден. Статус: ${result.status}`);
+    await safeReply(ctx, `Приз подтвержден. Статус: ${result.status}`);
   } catch (error) {
-    await ctx.reply(`Ошибка подтверждения: ${error instanceof Error ? error.message : "unknown error"}`);
+    await safeReply(ctx, `Ошибка подтверждения: ${error instanceof Error ? error.message : "unknown error"}`);
   }
 });
 
 bot.command("reject_win", async (ctx) => {
   const [command, winId, ...reasonParts] = ctx.message.text.trim().split(" ");
   if (command !== "/reject_win" || !winId) {
-    await ctx.reply("Формат: /reject_win <win_id> [причина]");
+    await safeReply(ctx, "Формат: /reject_win <win_id> [причина]");
     return;
   }
   try {
     const reason = reasonParts.join(" ").trim() || undefined;
     const result = await operatorWinAction("reject", winId, reason);
-    await ctx.reply(`Приз отклонен. Статус: ${result.status}`);
+    await safeReply(ctx, `Приз отклонен. Статус: ${result.status}`);
   } catch (error) {
-    await ctx.reply(`Ошибка отклонения: ${error instanceof Error ? error.message : "unknown error"}`);
+    await safeReply(ctx, `Ошибка отклонения: ${error instanceof Error ? error.message : "unknown error"}`);
   }
+});
+
+bot.catch((error, ctx) => {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error("[ruletka-bot] handler error", ctx.updateType, message);
 });
 
 bot.launch();
