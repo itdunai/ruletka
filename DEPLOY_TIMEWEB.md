@@ -54,7 +54,8 @@
 
 1. Добавьте бота администратором в каждый обязательный канал.
 2. В `.env` задайте:
-   - `REQUIRED_CHANNELS=@channel_one,@channel_two`
+   - `REQUIRED_CHANNELS=-1001234567890,-1002234567890` — id каналов (для проверки подписки).
+   - `REQUIRED_CHANNELS_LINKS=...` — список «название###ссылка@@@...» для кликабельных ссылок в ответах бота (подробнее в `.env.example` и `DEPLOY_BEGET.md`, раздел 3.3).
 
 Важно: бот должен иметь право видеть участников канала (иначе `getChatMember` может не пройти).
 
@@ -95,6 +96,10 @@ ACCESS_TOKEN_TTL=7d
 CORS_ORIGINS=https://wheel.yourdomain.ru
 
 DATABASE_URL=postgresql://user:password@127.0.0.1:5432/ruletka?schema=public
+SPIN_READY_REMINDER_INTERVAL_MS=300000
+SPIN_READY_REMINDER_TEXT=🎯 Доступна новая попытка! Возвращайтесь крутить колесо.
+APP_TIME_ZONE=Asia/Irkutsk
+VITE_APP_TIME_ZONE=Asia/Irkutsk
 ```
 
 Пояснения:
@@ -127,6 +132,7 @@ DATABASE_URL=postgresql://user:password@127.0.0.1:5432/ruletka?schema=public
   - Несколько origin (через запятую): `https://wheel.yourdomain.ru,https://admin.yourdomain.ru`
   - Для локальной разработки: `http://localhost:5173`
 - `VITE_API_BASE_URL`: обязательна для `npm run build --workspace @ruletka/miniapp`, в проде ставьте `https://api.yourdomain.ru`.
+- `APP_TIME_ZONE`, `VITE_APP_TIME_ZONE`: таймзона для дат в API и mini app. Для Иркутска используйте `Asia/Irkutsk`.
 
 ## 5. Как сгенерировать безопасные токены
 

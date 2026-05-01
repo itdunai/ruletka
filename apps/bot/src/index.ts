@@ -10,6 +10,45 @@ const requiredChannels = (process.env.REQUIRED_CHANNELS ?? "")
   .map((channel: string) => channel.trim())
   .filter(Boolean);
 
+function escapeHtml(text: string) {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function escapeAttr(text: string) {
+  return text.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+}
+
+function parseRequiredChannelLinks(raw: string | undefined): Array<{ title: string; url: string }> {
+  if (!raw?.trim()) return [];
+  return raw
+    .split("@@@")
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .map((segment) => {
+      const idx = segment.indexOf("###");
+      if (idx === -1) return null;
+      const title = segment.slice(0, idx).trim();
+      const url = segment.slice(idx + 3).trim();
+      if (!title || !url) return null;
+      return { title, url };
+    })
+    .filter((item): item is { title: string; url: string } => Boolean(item));
+}
+
+const requiredChannelLinkItems = parseRequiredChannelLinks(process.env.REQUIRED_CHANNELS_LINKS);
+
+function formatRequiredChannelsListHtml(): string {
+  if (requiredChannelLinkItems.length > 0) {
+    return requiredChannelLinkItems
+      .map((item) => `• <a href="${escapeAttr(item.url)}">${escapeHtml(item.title)}</a>`)
+      .join("\n");
+  }
+  if (requiredChannels.length > 0) {
+    return requiredChannels.map((id) => `• <code>${escapeHtml(id)}</code>`).join("\n");
+  }
+  return "• @your_channel";
+}
+
 if (!token) {
   throw new Error("BOT_TOKEN is required");
 }
@@ -64,16 +103,15 @@ bot.start(async (ctx) => {
   const subscribed = await isSubscribedToAllRequiredChannels(ctx.from.id);
 
   if (!subscribed) {
-    const channelsText =
-      requiredChannels.length > 0 ? requiredChannels.map((channel: string) => `- ${channel}`).join("\n") : "- @your_channel";
-
     await ctx.reply(
       [
         "Перед запуском приложения нужно подписаться на каналы:",
-        channelsText,
+        "",
+        formatRequiredChannelsListHtml(),
         "",
         "После подписки нажмите /check"
-      ].join("\n")
+      ].join("\n"),
+      { parse_mode: "HTML", link_preview_options: { is_disabled: true } }
     );
     return;
   }
@@ -84,7 +122,14 @@ bot.start(async (ctx) => {
 bot.command("check", async (ctx) => {
   const subscribed = await isSubscribedToAllRequiredChannels(ctx.from.id);
   if (!subscribed) {
-    await ctx.reply("Подписка пока не подтверждена. Проверьте каналы и попробуйте снова.");
+    await ctx.reply(
+      [
+        "Подписка пока не подтверждена. Проверьте каналы и попробуйте снова.",
+        "",
+        formatRequiredChannelsListHtml()
+      ].join("\n"),
+      { parse_mode: "HTML", link_preview_options: { is_disabled: true } }
+    );
     return;
   }
   await ctx.reply("Подписка подтверждена.", openMiniAppKeyboard());

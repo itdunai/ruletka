@@ -41,7 +41,10 @@
 
 1. Добавьте бота админом в обязательные каналы.
 2. В `.env`:
-- `REQUIRED_CHANNELS=@channel_one,@channel_two`
+- `REQUIRED_CHANNELS=-1001234567890,-1002234567890` — id каналов через запятую (для `getChatMember`: `-100...` или `@public_channel`).
+- `REQUIRED_CHANNELS_LINKS=...` — как показать пользователю названия и **рабочие ссылки** в `/start` и `/check`. Формат: записи разделяются `@@@`, внутри записи `Название канала###https://t.me/...` (пригласительные ссылки `t.me/+...` допустимы).
+
+Если `REQUIRED_CHANNELS_LINKS` не задан, бот покажет id из `REQUIRED_CHANNELS` как текст (ссылками не кликается).
 
 ## 3.4 Чат магазина
 
@@ -76,6 +79,10 @@ CORS_ORIGINS=https://wheel.yourdomain.ru
 UPLOAD_DIR=uploads
 UPLOAD_BASE_URL=https://api.yourdomain.ru
 EXPIRATION_JOB_INTERVAL_MS=60000
+SPIN_READY_REMINDER_INTERVAL_MS=300000
+SPIN_READY_REMINDER_TEXT=🎯 Доступна новая попытка! Возвращайтесь крутить колесо.
+APP_TIME_ZONE=Asia/Irkutsk
+VITE_APP_TIME_ZONE=Asia/Irkutsk
 
 DATABASE_URL=postgresql://user:password@127.0.0.1:5432/ruletka?schema=public
 ```
@@ -99,6 +106,9 @@ DATABASE_URL=postgresql://user:password@127.0.0.1:5432/ruletka?schema=public
   - Обязательная переменная для сборки mini app.
   - Должна указывать на публичный API (`https://api.yourdomain.ru`).
   - Если не указать, frontend не соберется и не будет fallback на `localhost`.
+- `APP_TIME_ZONE` и `VITE_APP_TIME_ZONE`:
+  - Таймзона для форматирования дат в API-сообщениях и в mini app.
+  - Для Иркутска используйте: `Asia/Irkutsk`.
 
 ## 5. Развертывание на Beget VPS
 
@@ -363,6 +373,8 @@ pm2 restart ruletka-bot
 cd /var/www/ruletka
 git pull
 npm run build --workspace @ruletka/miniapp
+pm2 restart ruletka-api --update-env
+pm2 restart ruletka-bot --update-env
 sudo nginx -t && sudo systemctl reload nginx
 ```
 

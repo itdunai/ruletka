@@ -76,6 +76,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
 if (!API_BASE_URL) {
   throw new Error("Требуется VITE_API_BASE_URL");
 }
+const APP_TIME_ZONE = (import.meta.env.VITE_APP_TIME_ZONE ?? "Asia/Irkutsk").trim();
 const CARD_WIDTH = 280;
 const CARD_GAP = 0;
 const STEP = CARD_WIDTH + CARD_GAP;
@@ -97,6 +98,10 @@ function winStatusLabel(status: "active" | "expired" | "claimed" | "cancelled") 
     default:
       return status;
   }
+}
+
+function formatDateTime(value: string | Date) {
+  return new Date(value).toLocaleString("ru-RU", { timeZone: APP_TIME_ZONE });
 }
 
 export function App() {
@@ -536,8 +541,8 @@ export function App() {
               </div>
               <div className="ibox">
                 <div>Забрать приз в течение <span>3 дней</span></div>
-                <div>Сегодня: <span>{new Date(spinResult.createdAt).toLocaleString("ru-RU")}</span></div>
-                <div>Забрать до: <span>{new Date(spinResult.expiresAt).toLocaleString("ru-RU")}</span></div>
+                <div>Сегодня: <span>{formatDateTime(spinResult.createdAt)}</span></div>
+                <div>Забрать до: <span>{formatDateTime(spinResult.expiresAt)}</span></div>
                 <div style={{ marginTop: 6 }}>Сообщение с призом отправлено вам в чат с ботом</div>
               </div>
               <button className="lbtn" onClick={() => setScreen("prizeTerms")}>
@@ -588,9 +593,9 @@ export function App() {
                   appState.wins.map((win) => (
                     <div className="pcitem" key={win.id}>
                       <div className="pcl">
-                        <div className="pcdate">{new Date(win.createdAt).toLocaleString("ru-RU")}</div>
+                        <div className="pcdate">{formatDateTime(win.createdAt)}</div>
                         <div className="pcname">{win.prizeTitle}</div>
-                        <div className="pcexp">До {new Date(win.expiresAt).toLocaleString("ru-RU")}</div>
+                        <div className="pcexp">До {formatDateTime(win.expiresAt)}</div>
                       </div>
                       <div className="pcmeta">
                         <div className="pcval">{winStatusLabel(win.status)}</div>

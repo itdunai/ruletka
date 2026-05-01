@@ -20,6 +20,7 @@ const WIN_EXPIRATION_MS = 3 * 24 * 60 * 60 * 1000;
 const EXPIRATION_JOB_INTERVAL_MS = Number(process.env.EXPIRATION_JOB_INTERVAL_MS ?? 60_000);
 const SPIN_READY_REMINDER_INTERVAL_MS = Number(process.env.SPIN_READY_REMINDER_INTERVAL_MS ?? 300_000);
 const DEMO_TELEGRAM_ID = 700000001;
+const appTimeZone = process.env.APP_TIME_ZONE?.trim() || "Asia/Irkutsk";
 const adminToken = process.env.ADMIN_TOKEN ?? "";
 const operatorToken = process.env.OPERATOR_TOKEN ?? "";
 const shopChatId = process.env.SHOP_CHAT_ID ?? "";
@@ -39,6 +40,10 @@ const accessTokenTtl = process.env.ACCESS_TOKEN_TTL ?? "7d";
 const shopOperatorUsername = process.env.SHOP_OPERATOR_USERNAME ?? "@snus_irk_operator";
 const spinReadyReminderText =
   process.env.SPIN_READY_REMINDER_TEXT?.trim() || "🎯 Доступна новая попытка! Возвращайтесь крутить колесо.";
+
+function formatDateTimeForAppTz(value: Date) {
+  return value.toLocaleString("ru-RU", { timeZone: appTimeZone });
+}
 const CONTENT_KEYS = {
   promoTerms: "content.promo_terms",
   prizeTerms: "content.prize_terms"
@@ -320,7 +325,7 @@ function formatWinReminderMessage(input: {
     `⚙️ Ваш username: ${userNameLine}`,
     `🆔 Ваш id: ${input.telegramId.toString()}`,
     "🎊 Забрать приз можно в течение 3 дней",
-    `🗓 Сегодня: ${input.createdAt.toLocaleString("ru-RU")}, забрать приз можно до: ${input.expiresAt.toLocaleString("ru-RU")}`
+    `🗓 Сегодня: ${formatDateTimeForAppTz(input.createdAt)}, забрать приз можно до: ${formatDateTimeForAppTz(input.expiresAt)}`
   ].join("\n");
 }
 
