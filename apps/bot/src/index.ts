@@ -1,6 +1,29 @@
-import "dotenv/config";
+import dotenv from "dotenv";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Context } from "telegraf";
 import { Markup, Telegraf } from "telegraf";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const monorepoRoot = path.resolve(__dirname, "../../..");
+const rootEnvPath = path.join(monorepoRoot, ".env");
+void dotenv.config({ path: rootEnvPath });
+void dotenv.config();
+
+function readChannelLinksRaw(): string {
+  const fromEnv = process.env.REQUIRED_CHANNELS_LINKS?.replace(/^\uFEFF/, "").trim();
+  if (fromEnv) return fromEnv;
+  const filePath = process.env.REQUIRED_CHANNELS_LINKS_FILE?.trim();
+  if (filePath && fs.existsSync(filePath)) {
+    return fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "").trim();
+  }
+  const defaultPath = path.join(monorepoRoot, "deploy", "required-channel-links.txt");
+  if (fs.existsSync(defaultPath)) {
+    return fs.readFileSync(defaultPath, "utf8").replace(/^\uFEFF/, "").trim();
+  }
+  return "";
+}
 
 const token = process.env.BOT_TOKEN;
 const miniAppUrl = process.env.MINIAPP_URL ?? "https://example.com/miniapp";
@@ -37,19 +60,30 @@ function splitChannelTitleAndUrl(segment: string): { title: string; url: string 
 
 function parseRequiredChannelLinks(raw: string | undefined): Array<{ title: string; url: string }> {
   if (!raw?.trim()) return [];
-  return raw
-    .split("@@@")
+  const segments = raw.includes("@@@") ? raw.split("@@@") : raw.split(/\r?\n/);
+  return segments
     .map((segment) => segment.trim())
     .filter(Boolean)
     .map((segment) => splitChannelTitleAndUrl(segment))
     .filter((item): item is { title: string; url: string } => Boolean(item));
 }
 
-const requiredChannelLinkItems = parseRequiredChannelLinks(process.env.REQUIRED_CHANNELS_LINKS);
+const channelLinksRaw = readChannelLinksRaw();
+let requiredChannelLinkItems = parseRequiredChannelLinks(channelLinksRaw);
+const fallbackLinksPath = path.join(monorepoRoot, "deploy", "required-channel-links.txt");
+if (requiredChannelLinkItems.length === 0 && fs.existsSync(fallbackLinksPath)) {
+  const fallbackRaw = fs.readFileSync(fallbackLinksPath, "utf8").replace(/^\uFEFF/, "").trim();
+  requiredChannelLinkItems = parseRequiredChannelLinks(fallbackRaw);
+  if (requiredChannelLinkItems.length > 0) {
+    console.info("[ruletka-bot] channel links loaded from", fallbackLinksPath);
+  }
+}
 
 console.info(
   "[ruletka-bot] REQUIRED_CHANNELS_LINKS:",
-  requiredChannelLinkItems.length > 0 ? `${requiredChannelLinkItems.length} entries (titles with links)` : "empty or unparsed — check .env (use ||| not ### unless value is in double quotes)"
+  requiredChannelLinkItems.length > 0
+    ? `${requiredChannelLinkItems.length} entries (titles with links)`
+    : `empty or unparsed — env length ${process.env.REQUIRED_CHANNELS_LINKS?.length ?? 0}; blob length ${channelLinksRaw.length}; use ||| between title and URL; or deploy/required-channel-links.txt`
 );
 
 function formatRequiredChannelsListHtml(): string {
