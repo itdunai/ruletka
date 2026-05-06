@@ -406,6 +406,32 @@ async function sendSpinReadyReminderToUser(input: { userTelegramId: bigint }) {
   }
 }
 
+async function sendPrizeUsedByUserMessage(input: { userTelegramId: bigint; prizeTitle: string }) {
+  if (!botToken) {
+    throw app.httpErrors.internalServerError("BOT_TOKEN не настроен");
+  }
+  const isDemo = input.userTelegramId.toString() === String(DEMO_TELEGRAM_ID);
+  const targetChatId = isDemo && shopChatId ? shopChatId : input.userTelegramId.toString();
+  const text = `Вы использовали свой приз : ${input.prizeTitle}!`;
+  const telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: targetChatId,
+      text
+    })
+  });
+  const telegramData = (await telegramResponse.json()) as {
+    ok?: boolean;
+    description?: string;
+  };
+  if (!telegramResponse.ok || !telegramData.ok) {
+    throw app.httpErrors.badGateway(
+      `Не удалось отправить сообщение в Telegram: ${telegramData.description ?? "неизвестная ошибка"}`
+    );
+  }
+}
+
 async function expireActiveWins() {
   const now = new Date();
   const result = await prisma.win.updateMany({
@@ -811,7 +837,10 @@ app.get("/app/state", async (request) => {
       orderBy: { spinAt: "desc" }
     }),
     prisma.win.findMany({
-      where: { userId: user.id },
+      where: {
+        userId: user.id,
+        status: { not: WinStatus.cancelled }
+      },
       include: { prize: true },
       orderBy: { createdAt: "desc" }
     }),
@@ -950,6 +979,54 @@ app.post("/spin", async (request) => {
     nextSpinAt: getNextSpinAt(now),
     reminderSent
   };
+});
+
+app.post("/wins/:winId/order-received", async (request) => {
+  const params = z.object({ winId: z.string().min(1) }).parse(request.params);
+  const auth = requireUser(request);
+  const user = await prisma.user.findUnique({ where: { id: auth.userId } });
+  if (!user) {
+    throw app.httpErrors.notFound("Пользователь не найден");
+  }
+  const win = await prisma.win.findFirst({
+    where: {
+      id: params.winId,
+      userId: user.id
+    },
+    include: { prize: true }
+  });
+  if (!win) {
+    throw app.httpErrors.notFound("Выигрыш не найден");
+  }
+  if (win.status !== WinStatus.active) {
+    throw app.httpErrors.badRequest("Приз уже недоступен для этого действия");
+  }
+  if (win.expiresAt.getTime() <= Date.now()) {
+    await prisma.win.update({
+      where: { id: win.id },
+      data: { status: WinStatus.expired }
+    });
+    throw app.httpErrors.badRequest("Срок действия выигрыша истек");
+  }
+
+  try {
+    await sendPrizeUsedByUserMessage({
+      userTelegramId: user.telegramId,
+      prizeTitle: win.prize.title
+    });
+  } catch (error) {
+    app.log.error({ err: error, winId: win.id }, "Failed to send prize-used message");
+    throw app.httpErrors.badGateway(
+      error instanceof Error ? error.message : "Не удалось отправить сообщение в Telegram"
+    );
+  }
+
+  await prisma.win.update({
+    where: { id: win.id },
+    data: { status: WinStatus.cancelled }
+  });
+
+  return { ok: true };
 });
 
 app.post("/wins/:winId/send-to-shop", async (request) => {

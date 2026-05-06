@@ -426,6 +426,31 @@ export function App() {
     }
   }
 
+  async function markOrderReceived(winId: string) {
+    setError("");
+    setLoading(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/wins/${winId}/order-received`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`
+        },
+        body: JSON.stringify({})
+      });
+      const data = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        throw new Error(data?.message ?? "Не удалось подтвердить получение");
+      }
+      await fetchState();
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Ошибка запроса";
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   if (adminMode) {
     return <AdminPanel apiBaseUrl={API_BASE_URL} />;
   }
@@ -600,9 +625,14 @@ export function App() {
                       <div className="pcmeta">
                         <div className="pcval">{winStatusLabel(win.status)}</div>
                         {win.status === "active" ? (
-                          <button className="pcResendBtn" onClick={() => void resendWinReminder(win.id)} disabled={loading}>
-                            Отправить повторно
-                          </button>
+                          <>
+                            <button className="pcOrderBtn" onClick={() => void markOrderReceived(win.id)} disabled={loading}>
+                              Заказ получен
+                            </button>
+                            <button className="pcResendBtn" onClick={() => void resendWinReminder(win.id)} disabled={loading}>
+                              Отправить повторно
+                            </button>
+                          </>
                         ) : null}
                       </div>
                     </div>
