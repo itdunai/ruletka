@@ -78,7 +78,7 @@ if (!API_BASE_URL) {
   throw new Error("Требуется VITE_API_BASE_URL");
 }
 const APP_TIME_ZONE = (import.meta.env.VITE_APP_TIME_ZONE ?? "Asia/Irkutsk").trim();
-const CARD_WIDTH = 280;
+const CARD_WIDTH = 340;
 const CARD_GAP = 0;
 const STEP = CARD_WIDTH + CARD_GAP;
 const REPS = 14;
