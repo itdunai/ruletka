@@ -68,6 +68,10 @@ declare global {
           user?: TelegramUser;
         };
         ready?: () => void;
+        expand?: () => void;
+        setHeaderColor?: (color: string) => void;
+        setBackgroundColor?: (color: string) => void;
+        isExpanded?: boolean;
       };
     };
   }
@@ -218,6 +222,13 @@ export function App() {
   useEffect(() => {
     const webApp = window.Telegram?.WebApp;
     webApp?.ready?.();
+    try {
+      webApp?.expand?.();
+      webApp?.setHeaderColor?.("#1a1c18");
+      webApp?.setBackgroundColor?.("#0e100d");
+    } catch {
+      // Older Telegram clients may not support these methods.
+    }
     const tgUser = webApp?.initDataUnsafe?.user;
     // Fallback: Telegram can pass tgWebAppData in URL when SDK object is delayed/unavailable.
     const searchParams = new URLSearchParams(window.location.search);
