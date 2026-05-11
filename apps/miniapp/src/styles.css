@@ -330,7 +330,7 @@ a.textLink {
   color: var(--green);
   text-transform: uppercase;
   text-align: center;
-  padding-top: calc(50px + env(safe-area-inset-top, 0px));
+  padding-top: calc(90px + env(safe-area-inset-top, 0px));
 }
 
 .rbody {
@@ -465,7 +465,7 @@ a.textLink {
 }
 
 .phdr {
-  padding: calc(50px + env(safe-area-inset-top, 0px)) 18px 14px;
+  padding: calc(90px + env(safe-area-inset-top, 0px)) 18px 14px;
   display: flex;
   align-items: center;
   gap: 12px;
