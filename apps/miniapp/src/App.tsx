@@ -72,9 +72,38 @@ declare global {
         setHeaderColor?: (color: string) => void;
         setBackgroundColor?: (color: string) => void;
         isExpanded?: boolean;
+        isFullscreen?: boolean;
+        platform?: string;
+        viewportHeight?: number;
+        viewportStableHeight?: number;
+        BackButton?: {
+          show?: () => void;
+          hide?: () => void;
+          onClick?: (handler: () => void) => void;
+          offClick?: (handler: () => void) => void;
+          isVisible?: boolean;
+        };
       };
     };
   }
+}
+
+function detectTelegramFullscreen() {
+  const webApp = window.Telegram?.WebApp;
+  if (webApp?.isFullscreen) return true;
+
+  const probe = document.createElement("div");
+  probe.style.cssText =
+    "position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top, 0px);visibility:hidden;pointer-events:none;";
+  document.body.appendChild(probe);
+  const inset = probe.getBoundingClientRect().height;
+  probe.remove();
+  if (inset > 0) return true;
+
+  if (webApp?.viewportStableHeight && Math.abs(webApp.viewportStableHeight - window.innerHeight) < 2) {
+    return true;
+  }
+  return false;
 }
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").trim();
@@ -229,6 +258,16 @@ export function App() {
     } catch {
       // Older Telegram clients may not support these methods.
     }
+    const applyFullscreenAttr = () => {
+      if (detectTelegramFullscreen()) {
+        document.body.dataset.tgFullscreen = "1";
+      } else {
+        delete document.body.dataset.tgFullscreen;
+      }
+    };
+    applyFullscreenAttr();
+    const recheckTimer = window.setTimeout(applyFullscreenAttr, 250);
+    window.addEventListener("resize", applyFullscreenAttr);
     const tgUser = webApp?.initDataUnsafe?.user;
     // Fallback: Telegram can pass tgWebAppData in URL when SDK object is delayed/unavailable.
     const searchParams = new URLSearchParams(window.location.search);
@@ -262,6 +301,10 @@ export function App() {
     }
     setInitData(webApp?.initData || decodedInitData || "");
     setAuthReady(true);
+    return () => {
+      window.clearTimeout(recheckTimer);
+      window.removeEventListener("resize", applyFullscreenAttr);
+    };
   }, []);
 
   useEffect(() => {
@@ -305,6 +348,41 @@ export function App() {
     if (!accessToken) return;
     void fetchState();
   }, [accessToken]);
+
+  useEffect(() => {
+    const backButton = window.Telegram?.WebApp?.BackButton;
+    if (!backButton?.show || !backButton.hide) return;
+
+    const backTargets: Partial<Record<Screen, Screen>> = {
+      myPrizes: "main",
+      terms: "main",
+      prizeTerms: "result",
+      result: "main"
+    };
+    const target = backTargets[screen];
+
+    if (!target) {
+      try { backButton.hide(); } catch {}
+      return;
+    }
+
+    const handler = () => setScreen(target);
+    try {
+      backButton.onClick?.(handler);
+      backButton.show();
+    } catch {
+      // Older Telegram clients may not support BackButton.
+    }
+
+    return () => {
+      try {
+        backButton.offClick?.(handler);
+        backButton.hide?.();
+      } catch {
+        // Ignore cleanup errors.
+      }
+    };
+  }, [screen]);
 
   useEffect(() => {
     if (!appState?.nextSpinAt) {

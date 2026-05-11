@@ -59,6 +59,9 @@ select {
   overflow: hidden;
   min-height: 1px;
   height: 100%;
+}
+
+body[data-tg-fullscreen="1"] .app {
   padding-left: env(safe-area-inset-left, 0px);
   padding-right: env(safe-area-inset-right, 0px);
 }
@@ -75,10 +78,14 @@ select {
 }
 
 .topbar {
-  padding: calc(50px + env(safe-area-inset-top, 0px)) 0 10px;
+  padding: 14px 0 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+body[data-tg-fullscreen="1"] .topbar {
+  padding-top: calc(50px + env(safe-area-inset-top, 0px));
 }
 
 .topbarLeft {
@@ -160,12 +167,16 @@ select {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: calc(15px + env(safe-area-inset-bottom, 0px));
+  bottom: 15px;
   z-index: 7;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2px;
+}
+
+body[data-tg-fullscreen="1"] .spinDock {
+  bottom: calc(15px + env(safe-area-inset-bottom, 0px));
 }
 
 .spinTriangle {
@@ -330,7 +341,11 @@ a.textLink {
   color: var(--green);
   text-transform: uppercase;
   text-align: center;
-  padding-top: calc(70px + env(safe-area-inset-top, 0px));
+  padding-top: 14px;
+}
+
+body[data-tg-fullscreen="1"] .resultType {
+  padding-top: calc(55px + env(safe-area-inset-top, 0px));
 }
 
 .rbody {
@@ -465,11 +480,15 @@ a.textLink {
 }
 
 .phdr {
-  padding: calc(70px + env(safe-area-inset-top, 0px)) 18px 14px;
+  padding: 14px 18px;
   display: flex;
   align-items: center;
   gap: 12px;
   border-bottom: 1px solid var(--border);
+}
+
+body[data-tg-fullscreen="1"] .phdr {
+  padding-top: calc(55px + env(safe-area-inset-top, 0px));
 }
 
 .bbtn {
@@ -478,6 +497,10 @@ a.textLink {
   color: var(--text2);
   font-size: 14px;
   cursor: pointer;
+}
+
+body[data-tg-fullscreen="1"] .bbtn {
+  display: none;
 }
 
 .pttl {
