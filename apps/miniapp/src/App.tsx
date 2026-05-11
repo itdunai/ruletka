@@ -89,16 +89,26 @@ declare global {
 }
 
 function detectTelegramFullscreen() {
+  const params = new URLSearchParams(window.location.search);
+  const explicitMode = params.get("mode")?.toLowerCase();
+  if (explicitMode === "mainapp" || explicitMode === "main" || explicitMode === "fullscreen" || params.get("fullscreen") === "1") {
+    return true;
+  }
+
   const webApp = window.Telegram?.WebApp;
   if (webApp?.isFullscreen) return true;
 
-  const probe = document.createElement("div");
-  probe.style.cssText =
-    "position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top, 0px);visibility:hidden;pointer-events:none;";
-  document.body.appendChild(probe);
-  const inset = probe.getBoundingClientRect().height;
-  probe.remove();
-  if (inset > 0) return true;
+  try {
+    const probe = document.createElement("div");
+    probe.style.cssText =
+      "position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top, 0px);visibility:hidden;pointer-events:none;";
+    document.body.appendChild(probe);
+    const inset = probe.getBoundingClientRect().height;
+    probe.remove();
+    if (inset > 0) return true;
+  } catch {
+    // Probe may fail in some embedded browsers; ignore.
+  }
 
   if (webApp?.viewportStableHeight && Math.abs(webApp.viewportStableHeight - window.innerHeight) < 2) {
     return true;
@@ -156,6 +166,7 @@ export function App() {
   const [spinning, setSpinning] = useState(false);
   const [accessToken, setAccessToken] = useState("");
   const [nextSpinCountdown, setNextSpinCountdown] = useState("");
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [contentTexts, setContentTexts] = useState<ContentTexts>({
     promoTerms:
       "<h3>Правила</h3><ul><li>Подпишитесь на каналы магазина</li><li>Нажмите \"Крутить\"</li><li>Приз действует 3 дня</li><li>Покажите сообщение оператору</li><li>1 попытка в неделю</li></ul>",
@@ -259,11 +270,13 @@ export function App() {
       // Older Telegram clients may not support these methods.
     }
     const applyFullscreenAttr = () => {
-      if (detectTelegramFullscreen()) {
+      const detected = detectTelegramFullscreen();
+      if (detected) {
         document.body.dataset.tgFullscreen = "1";
       } else {
         delete document.body.dataset.tgFullscreen;
       }
+      setIsFullscreen(detected);
     };
     applyFullscreenAttr();
     const recheckTimer = window.setTimeout(applyFullscreenAttr, 250);
@@ -350,6 +363,7 @@ export function App() {
   }, [accessToken]);
 
   useEffect(() => {
+    if (!isFullscreen) return;
     const backButton = window.Telegram?.WebApp?.BackButton;
     if (!backButton?.show || !backButton.hide) return;
 
@@ -362,7 +376,7 @@ export function App() {
     const target = backTargets[screen];
 
     if (!target) {
-      try { backButton.hide(); } catch {}
+      try { backButton.hide(); } catch { /* noop */ }
       return;
     }
 
@@ -382,7 +396,7 @@ export function App() {
         // Ignore cleanup errors.
       }
     };
-  }, [screen]);
+  }, [screen, isFullscreen]);
 
   useEffect(() => {
     if (!appState?.nextSpinAt) {
