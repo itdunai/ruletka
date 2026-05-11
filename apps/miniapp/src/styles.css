@@ -158,7 +158,7 @@ select {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 50px;
+  bottom: 15px;
   z-index: 7;
   display: flex;
   flex-direction: column;
@@ -291,6 +291,8 @@ select {
   text-align: center;
   padding: 0 16px 0;
   line-height: 1.5;
+  max-width: 270px;
+  margin: 0 auto;
 }
 
 .textLink {
@@ -298,6 +300,7 @@ select {
   border: none;
   background: transparent;
   cursor: pointer;
+  font-size: 12px;
 }
 
 a.textLink {
