@@ -30,6 +30,7 @@ type AppStateResponse = {
     id: string;
     prizeId: string;
     prizeTitle: string;
+    prizeType?: string;
     status: "active" | "expired" | "claimed" | "cancelled";
     expiresAt: string;
     createdAt: string;
@@ -624,7 +625,7 @@ export function App() {
                       </div>
                       <div className="pcmeta">
                         <div className="pcval">{winStatusLabel(win.status)}</div>
-                        {win.status === "active" ? (
+                        {win.status === "active" && (win.prizeType ?? prizePool.find((p) => p.id === win.prizeId)?.type) !== "none" ? (
                           <>
                             <button className="pcOrderBtn" onClick={() => void markOrderReceived(win.id)} disabled={loading}>
                               Заказ получен

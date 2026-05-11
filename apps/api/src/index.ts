@@ -857,6 +857,7 @@ app.get("/app/state", async (request) => {
       id: win.id,
       prizeId: win.prizeId,
       prizeTitle: win.prize.title,
+      prizeType: toApiPrizeType(win.prize.type),
       status: win.status,
       expiresAt: win.expiresAt,
       createdAt: win.createdAt
