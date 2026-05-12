@@ -85,7 +85,7 @@ body[data-tg-fullscreen="1"] .app {
 }
 
 body[data-tg-fullscreen="1"] .topbar {
-  padding-top: calc(50px + env(safe-area-inset-top, 0px));
+  padding-top: max(70px, calc(50px + env(safe-area-inset-top, 0px)));
 }
 
 .topbarLeft {
@@ -176,7 +176,7 @@ body[data-tg-fullscreen="1"] .topbar {
 }
 
 body[data-tg-fullscreen="1"] .spinDock {
-  bottom: calc(15px + env(safe-area-inset-bottom, 0px));
+  bottom: max(25px, calc(15px + env(safe-area-inset-bottom, 0px)));
 }
 
 .spinTriangle {
@@ -345,7 +345,7 @@ a.textLink {
 }
 
 body[data-tg-fullscreen="1"] .resultType {
-  padding-top: calc(55px + env(safe-area-inset-top, 0px));
+  padding-top: max(75px, calc(55px + env(safe-area-inset-top, 0px)));
 }
 
 .rbody {
@@ -488,7 +488,7 @@ body[data-tg-fullscreen="1"] .resultType {
 }
 
 body[data-tg-fullscreen="1"] .phdr {
-  padding-top: calc(55px + env(safe-area-inset-top, 0px));
+  padding-top: max(75px, calc(55px + env(safe-area-inset-top, 0px)));
 }
 
 .bbtn {
@@ -499,9 +499,6 @@ body[data-tg-fullscreen="1"] .phdr {
   cursor: pointer;
 }
 
-body[data-tg-fullscreen="1"] .bbtn {
-  display: none;
-}
 
 .pttl {
   font-size: 15px;
