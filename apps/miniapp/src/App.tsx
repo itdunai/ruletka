@@ -31,7 +31,7 @@ type AppStateResponse = {
     prizeId: string;
     prizeTitle: string;
     prizeType?: string;
-    status: "active" | "expired" | "claimed" | "cancelled";
+    status: "active" | "expired" | "claimed" | "received" | "cancelled";
     expiresAt: string;
     createdAt: string;
   }>;
@@ -122,14 +122,13 @@ if (!API_BASE_URL) {
 }
 const APP_TIME_ZONE = (import.meta.env.VITE_APP_TIME_ZONE ?? "Asia/Irkutsk").trim();
 const CARD_WIDTH = 340;
-const CARD_GAP = 0;
+const CARD_GAP = 56;
 const STEP = CARD_WIDTH + CARD_GAP;
 const REPS = 14;
-const VIEWPORT_CENTER = 180;
 
 type Screen = "main" | "result" | "terms" | "prizeTerms" | "myPrizes";
 
-function winStatusLabel(status: "active" | "expired" | "claimed" | "cancelled") {
+function winStatusLabel(status: "active" | "expired" | "claimed" | "received" | "cancelled") {
   switch (status) {
     case "active":
       return "Активен";
@@ -137,6 +136,8 @@ function winStatusLabel(status: "active" | "expired" | "claimed" | "cancelled") 
       return "Сгорел";
     case "claimed":
       return "Использован";
+    case "received":
+      return "Получен";
     case "cancelled":
       return "Отменен";
     default:
@@ -175,7 +176,10 @@ export function App() {
   });
 
   const trackRef = useRef<HTMLDivElement | null>(null);
-  const idleRafRef = useRef<number | null>(null);
+  const slotOuterRef = useRef<HTMLDivElement | null>(null);
+  const idleRunIdRef = useRef(0);
+  const spinningRef = useRef(false);
+  const [viewportCenter, setViewportCenter] = useState(225);
 
   const displayName = username ? `@${username}` : firstName || "Пользователь";
   const prizePool = appState?.prizesPreview?.length ? appState.prizesPreview : [];
@@ -212,7 +216,7 @@ export function App() {
   }
 
   function cardOffset(globalIndex: number) {
-    return globalIndex * STEP - VIEWPORT_CENTER + CARD_WIDTH / 2;
+    return globalIndex * STEP - viewportCenter + CARD_WIDTH / 2;
   }
 
   function resolveImageUrl(imageUrl: string | null | undefined) {
@@ -414,39 +418,124 @@ export function App() {
   }, [appState?.nextSpinAt]);
 
   useEffect(() => {
+    const slot = slotOuterRef.current;
+    if (!slot) return;
+    const updateViewport = () => setViewportCenter(slot.clientWidth / 2);
+    updateViewport();
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(slot);
+    return () => observer.disconnect();
+  }, [screen]);
+
+  useEffect(() => {
     if (!trackRef.current) return;
     trackRef.current.style.transform = `translateX(${-offset}px)`;
   }, [offset]);
 
   useEffect(() => {
-    if (!prizePool.length) return;
-    const idleSpeed = 0.45;
-    const run = () => {
-      if (spinning) return;
-      setOffset((prev) => {
-        const next = prev + idleSpeed;
-        const wrapThreshold = prizePool.length * STEP * (REPS - 3);
-        if (next > wrapThreshold) {
-          return next - prizePool.length * STEP * (REPS / 2);
+    if (!prizePool.length || spinning) return;
+    setOffset((prev) => {
+      let bestOffset = cardOffset(prizePool.length * 2);
+      let bestDistance = Infinity;
+      const totalCards = prizePool.length * REPS;
+      for (let index = 0; index < totalCards; index += 1) {
+        const candidate = cardOffset(index);
+        const distance = Math.abs(candidate - prev);
+        if (distance < bestDistance) {
+          bestDistance = distance;
+          bestOffset = candidate;
         }
-        return next;
+      }
+      return bestOffset;
+    });
+  }, [viewportCenter, prizePool.length, spinning]);
+
+  useEffect(() => {
+    spinningRef.current = spinning;
+  }, [spinning]);
+
+  useEffect(() => {
+    if (!prizePool.length || screen !== "main" || spinning) return;
+
+    const poolLen = prizePool.length;
+    const bandStart = poolLen * 2;
+    const runId = ++idleRunIdRef.current;
+    const cancelled = () => idleRunIdRef.current !== runId || spinningRef.current || screen !== "main";
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => {
+        window.setTimeout(() => resolve(), ms);
       });
-      idleRafRef.current = requestAnimationFrame(run);
-    };
-    idleRafRef.current = requestAnimationFrame(run);
-    return () => {
-      if (idleRafRef.current) {
-        cancelAnimationFrame(idleRafRef.current);
+
+    const animateOffset = (from: number, to: number, duration: number) =>
+      new Promise<void>((resolve) => {
+        if (cancelled()) {
+          resolve();
+          return;
+        }
+        if (duration <= 0) {
+          setOffset(to);
+          resolve();
+          return;
+        }
+        let startTs = 0;
+        const frame = (ts: number) => {
+          if (cancelled()) {
+            resolve();
+            return;
+          }
+          if (!startTs) startTs = ts;
+          const t = Math.min((ts - startTs) / duration, 1);
+          const eased = 1 - (1 - t) * (1 - t);
+          setOffset(from + (to - from) * eased);
+          if (t < 1) {
+            requestAnimationFrame(frame);
+            return;
+          }
+          resolve();
+        };
+        requestAnimationFrame(frame);
+      });
+
+    let step = 0;
+
+    const loop = async () => {
+      while (!cancelled()) {
+        const globalIndex = bandStart + (step % poolLen);
+        const nextGlobalIndex = bandStart + ((step + 1) % poolLen);
+        const baseOffset = cardOffset(globalIndex);
+        const nextOffset = cardOffset(nextGlobalIndex);
+        const nudgeOffset = baseOffset - STEP * 0.05;
+
+        setOffset(baseOffset);
+        await sleep(1000);
+        if (cancelled()) break;
+
+        await animateOffset(baseOffset, nudgeOffset, 120);
+        if (cancelled()) break;
+
+        await animateOffset(nudgeOffset, nextOffset, 320);
+        if (cancelled()) break;
+
+        await sleep(2000);
+        if (cancelled()) break;
+
+        step += 1;
       }
     };
-  }, [prizePool.length, spinning]);
+
+    void loop();
+
+    return () => {
+      idleRunIdRef.current += 1;
+    };
+  }, [prizePool.length, screen, spinning, viewportCenter]);
 
   function animateSpinToPrize(prizeId: string) {
     if (!prizePool.length) return Promise.resolve();
+    idleRunIdRef.current += 1;
     setSpinning(true);
-    if (idleRafRef.current) {
-      cancelAnimationFrame(idleRafRef.current);
-    }
+    spinningRef.current = true;
 
     const prizeIndex = Math.max(0, prizePool.findIndex((prize) => prize.id === prizeId));
     const rounds = 7;
@@ -470,6 +559,7 @@ export function App() {
         }
         setOffset(startOffset + distance);
         setSpinning(false);
+        spinningRef.current = false;
         resolve();
       };
       requestAnimationFrame(frame);
@@ -564,6 +654,7 @@ export function App() {
       <div className="app">
         {(screen === "main" || screen === "result") && (
           <div className={`screen ${screen === "main" ? "active" : ""}`}>
+            <div className="glowC" aria-hidden="true" />
             <div className="topbar">
               <div className="topbarLeft">
                 Username: <span>{displayName}</span>
@@ -579,10 +670,7 @@ export function App() {
                 <div className="tlabel">До следующей попытки:</div>
                 <div className="tpill">{nextSpinCountdown || "Доступно"}</div>
               </div>
-              <div className="slotOuter">
-                <div className="fadeL" />
-                <div className="fadeR" />
-                <div className="glowC" />
+              <div className="slotOuter" ref={slotOuterRef}>
                 <div className="track" ref={trackRef}>
                   {repeatedPrizes.map((prize, index) => {
                     const token = prizeToken(prize.title);
@@ -611,7 +699,7 @@ export function App() {
                 </div>
               </div>
               <div className="spinDock">
-                <img className="spinTriangle" src="/images/triangle.svg" alt="" aria-hidden="true" />
+                <img className="spinTriangle" src="/images/triangle.png" alt="" aria-hidden="true" />
                 <button
                   className={`spinBtn ${!appState?.canSpin ? "used" : ""}`}
                   disabled={loading || stateLoading || spinning || !appState?.canSpin}
@@ -637,6 +725,7 @@ export function App() {
 
         {screen === "result" && spinResult && (
           <div className="screen active">
+            <div className="glowC" aria-hidden="true" />
             <div className="topbar">
               <div className="topbarLeft">
                 Username: <span>{displayName}</span>
@@ -686,9 +775,12 @@ export function App() {
 
         {screen === "terms" && (
           <div className="screen active">
-            <div className="phdr">
-              <button className="bbtn" onClick={() => setScreen("main")}>← Назад</button>
-              <div className="pttl">Условия акции</div>
+            <div className="glowC" aria-hidden="true" />
+            <div className="phdr phdrMyPrizes">
+              <button type="button" className="prizesBtn prizesBtnBack" onClick={() => setScreen("main")}>
+                ← Назад
+              </button>
+              <div className="pttl pttlMyPrizes">Условия акции</div>
             </div>
             <div className="pbody" dangerouslySetInnerHTML={{ __html: contentTexts.promoTerms }} />
           </div>
@@ -696,9 +788,12 @@ export function App() {
 
         {screen === "prizeTerms" && (
           <div className="screen active">
-            <div className="phdr">
-              <button className="bbtn" onClick={() => setScreen("result")}>← Назад</button>
-              <div className="pttl">Условия получения</div>
+            <div className="glowC" aria-hidden="true" />
+            <div className="phdr phdrMyPrizes">
+              <button type="button" className="prizesBtn prizesBtnBack" onClick={() => setScreen("result")}>
+                ← Назад
+              </button>
+              <div className="pttl pttlMyPrizes">Условия получения</div>
             </div>
             <div className="pbody" dangerouslySetInnerHTML={{ __html: contentTexts.prizeTerms }} />
           </div>
@@ -706,9 +801,12 @@ export function App() {
 
         {screen === "myPrizes" && (
           <div className="screen active">
-            <div className="phdr">
-              <button className="bbtn" onClick={() => setScreen("main")}>← Назад</button>
-              <div className="pttl">Мои призы</div>
+            <div className="glowC" aria-hidden="true" />
+            <div className="phdr phdrMyPrizes">
+              <button type="button" className="prizesBtn prizesBtnBack" onClick={() => setScreen("main")}>
+                ← Назад
+              </button>
+              <div className="pttl pttlMyPrizes">Мои призы</div>
             </div>
             <div className="pbody">
               <div className="plist">
@@ -724,7 +822,10 @@ export function App() {
                       <div className="pcl">
                         <div className="pcdate">{formatDateTime(win.createdAt)}</div>
                         <div className="pcname">{win.prizeTitle}</div>
-                        <div className="pcexp">До {formatDateTime(win.expiresAt)}</div>
+                        <div className="pcexp">
+                          <span className="pcexpLabel">Срок до </span>
+                          <span className="pcexpDate">{formatDateTime(win.expiresAt)}</span>
+                        </div>
                       </div>
                       <div className="pcmeta">
                         <div className="pcval">{winStatusLabel(win.status)}</div>

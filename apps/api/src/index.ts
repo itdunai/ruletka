@@ -1024,10 +1024,10 @@ app.post("/wins/:winId/order-received", async (request) => {
 
   await prisma.win.update({
     where: { id: win.id },
-    data: { status: WinStatus.cancelled }
+    data: { status: WinStatus.received, claimedAt: new Date() }
   });
 
-  return { ok: true };
+  return { ok: true, status: WinStatus.received };
 });
 
 app.post("/wins/:winId/send-to-shop", async (request) => {
