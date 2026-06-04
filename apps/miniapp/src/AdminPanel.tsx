@@ -45,7 +45,7 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
   const [promoTerms, setPromoTerms] = useState("");
   const [prizeTerms, setPrizeTerms] = useState("");
   const [broadcastText, setBroadcastText] = useState("");
-  const [broadcastTestTelegramId, setBroadcastTestTelegramId] = useState("");
+  const [broadcastTestRecipient, setBroadcastTestRecipient] = useState("");
 
   const headers = useMemo(
     () => ({
@@ -245,13 +245,7 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
   }
 
   async function sendBroadcastTest() {
-    if (!token || !broadcastText.trim() || !broadcastTestTelegramId.trim()) return;
-    const telegramId = Number(broadcastTestTelegramId.trim());
-    if (!Number.isInteger(telegramId) || telegramId <= 0) {
-      setError("Укажите корректный Telegram ID (целое положительное число)");
-      setToast({ type: "error", text: "Укажите корректный Telegram ID" });
-      return;
-    }
+    if (!token || !broadcastText.trim() || !broadcastTestRecipient.trim()) return;
     setLoading(true);
     setError("");
     setSuccess("");
@@ -259,13 +253,18 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
       const response = await fetch(`${apiBaseUrl}/admin/broadcast/test`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ text: broadcastText.trim(), telegramId })
+        body: JSON.stringify({ text: broadcastText.trim(), target: broadcastTestRecipient.trim() })
       });
-      const data = (await response.json()) as { message?: string; telegramId?: string };
+      const data = (await response.json()) as {
+        message?: string;
+        telegramId?: string;
+        username?: string | null;
+      };
       if (!response.ok) {
         throw new Error(data?.message ?? "Не удалось отправить тест");
       }
-      const summary = `Тест отправлен пользователю ${data.telegramId ?? telegramId}`;
+      const label = data.username ? `@${data.username}` : data.telegramId ?? broadcastTestRecipient.trim();
+      const summary = `Тест отправлен: ${label} (ID ${data.telegramId ?? "—"})`;
       setSuccess(summary);
       setToast({ type: "success", text: summary });
     } catch (caught) {
@@ -438,19 +437,20 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
               maxLength={4096}
             />
           </label>
-          <p className="adminMuted">Будет отправлено всем пользователям из базы, у кого есть чат с ботом.</p>
+          <p className="adminMuted">
+            Тест: числовой Telegram ID или @username (username ищется в базе). «Отправить всем» — всем из базы, у кого есть чат с ботом.
+          </p>
           <div className="adminFormInline adminBroadcastTestRow">
             <input
               type="text"
-              inputMode="numeric"
-              placeholder="Telegram ID для теста"
-              value={broadcastTestTelegramId}
-              onChange={(event) => setBroadcastTestTelegramId(event.target.value)}
+              placeholder="Telegram ID или @username"
+              value={broadcastTestRecipient}
+              onChange={(event) => setBroadcastTestRecipient(event.target.value)}
             />
             <button
               type="button"
               onClick={sendBroadcastTest}
-              disabled={!token || loading || !broadcastText.trim() || !broadcastTestTelegramId.trim()}
+              disabled={!token || loading || !broadcastText.trim() || !broadcastTestRecipient.trim()}
             >
               {loading ? "Отправка..." : "Тест на 1 пользователя"}
             </button>

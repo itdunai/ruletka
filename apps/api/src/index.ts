@@ -126,7 +126,7 @@ const adminBroadcastSchema = z.object({
 });
 const adminBroadcastTestSchema = z.object({
   text: z.string().trim().min(1).max(4096),
-  telegramId: z.coerce.number().int().positive()
+  target: z.string().trim().min(1).max(128)
 });
 const uploadPathSchema = z.object({
   prizeId: z.string().uuid()
@@ -825,6 +825,33 @@ app.post("/admin/broadcast", async (request) => {
   };
 });
 
+async function resolveBroadcastTestRecipient(target: string) {
+  const trimmed = target.trim();
+  if (/^\d+$/.test(trimmed)) {
+    return { chatId: trimmed, username: null as string | null };
+  }
+
+  const username = trimmed.replace(/^@+/, "").trim();
+  if (!username) {
+    throw app.httpErrors.badRequest("Укажите Telegram ID или username");
+  }
+
+  const user = await prisma.user.findFirst({
+    where: {
+      username: { equals: username, mode: "insensitive" }
+    },
+    select: { telegramId: true, username: true }
+  });
+  if (!user) {
+    throw app.httpErrors.notFound(`Пользователь @${username} не найден в базе`);
+  }
+
+  return {
+    chatId: user.telegramId.toString(),
+    username: user.username
+  };
+}
+
 app.post("/admin/broadcast/test", async (request) => {
   requireAdmin(request);
   const parsed = adminBroadcastTestSchema.safeParse(request.body);
@@ -835,9 +862,9 @@ app.post("/admin/broadcast/test", async (request) => {
     throw app.httpErrors.internalServerError("BOT_TOKEN не настроен");
   }
 
-  const chatId = String(parsed.data.telegramId);
+  const recipient = await resolveBroadcastTestRecipient(parsed.data.target);
   const result = await sendTelegramTextMessage({
-    chatId,
+    chatId: recipient.chatId,
     text: parsed.data.text
   });
 
@@ -849,7 +876,8 @@ app.post("/admin/broadcast/test", async (request) => {
 
   return {
     ok: true,
-    telegramId: chatId,
+    telegramId: recipient.chatId,
+    username: recipient.username,
     messageId: result.messageId
   };
 });
