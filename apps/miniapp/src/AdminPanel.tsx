@@ -44,6 +44,8 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [promoTerms, setPromoTerms] = useState("");
   const [prizeTerms, setPrizeTerms] = useState("");
+  const [broadcastText, setBroadcastText] = useState("");
+  const [broadcastTestTelegramId, setBroadcastTestTelegramId] = useState("");
 
   const headers = useMemo(
     () => ({
@@ -242,6 +244,74 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
     }
   }
 
+  async function sendBroadcastTest() {
+    if (!token || !broadcastText.trim() || !broadcastTestTelegramId.trim()) return;
+    const telegramId = Number(broadcastTestTelegramId.trim());
+    if (!Number.isInteger(telegramId) || telegramId <= 0) {
+      setError("Укажите корректный Telegram ID (целое положительное число)");
+      setToast({ type: "error", text: "Укажите корректный Telegram ID" });
+      return;
+    }
+    setLoading(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await fetch(`${apiBaseUrl}/admin/broadcast/test`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ text: broadcastText.trim(), telegramId })
+      });
+      const data = (await response.json()) as { message?: string; telegramId?: string };
+      if (!response.ok) {
+        throw new Error(data?.message ?? "Не удалось отправить тест");
+      }
+      const summary = `Тест отправлен пользователю ${data.telegramId ?? telegramId}`;
+      setSuccess(summary);
+      setToast({ type: "success", text: summary });
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Ошибка тестовой отправки";
+      setError(message);
+      setToast({ type: "error", text: message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function sendBroadcast() {
+    if (!token || !broadcastText.trim()) return;
+    if (!window.confirm("Отправить это сообщение всем пользователям Telegram?")) return;
+    setLoading(true);
+    setError("");
+    setSuccess("");
+    try {
+      const response = await fetch(`${apiBaseUrl}/admin/broadcast`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ text: broadcastText.trim() })
+      });
+      const data = (await response.json()) as {
+        message?: string;
+        totalUsers?: number;
+        successCount?: number;
+        failedCount?: number;
+      };
+      if (!response.ok) {
+        throw new Error(data?.message ?? "Не удалось выполнить рассылку");
+      }
+      const summary = `Рассылка завершена: ${data.successCount ?? 0}/${data.totalUsers ?? 0} доставлено, ошибок: ${
+        data.failedCount ?? 0
+      }`;
+      setSuccess(summary);
+      setToast({ type: "success", text: summary });
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Ошибка рассылки";
+      setError(message);
+      setToast({ type: "error", text: message });
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <main className="adminPage">
       <section className="adminCard">
@@ -351,6 +421,42 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
           </p>
           <button onClick={saveTerms} disabled={!token || loading}>
             Сохранить тексты
+          </button>
+        </div>
+      </section>
+
+      <section className="adminCard">
+        <h2>Рассылка</h2>
+        <div className="adminForm">
+          <label>
+            Текст сообщения
+            <textarea
+              value={broadcastText}
+              onChange={(event) => setBroadcastText(event.target.value)}
+              rows={6}
+              placeholder="Введите текст сообщения для всех пользователей Telegram"
+              maxLength={4096}
+            />
+          </label>
+          <p className="adminMuted">Будет отправлено всем пользователям из базы, у кого есть чат с ботом.</p>
+          <div className="adminFormInline adminBroadcastTestRow">
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="Telegram ID для теста"
+              value={broadcastTestTelegramId}
+              onChange={(event) => setBroadcastTestTelegramId(event.target.value)}
+            />
+            <button
+              type="button"
+              onClick={sendBroadcastTest}
+              disabled={!token || loading || !broadcastText.trim() || !broadcastTestTelegramId.trim()}
+            >
+              {loading ? "Отправка..." : "Тест на 1 пользователя"}
+            </button>
+          </div>
+          <button onClick={sendBroadcast} disabled={!token || loading || !broadcastText.trim()}>
+            {loading ? "Отправка..." : "Отправить всем"}
           </button>
         </div>
       </section>

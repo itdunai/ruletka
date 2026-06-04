@@ -121,6 +121,13 @@ const adminContentUpdateSchema = z.object({
   promoTerms: z.string().min(1),
   prizeTerms: z.string().min(1)
 });
+const adminBroadcastSchema = z.object({
+  text: z.string().trim().min(1).max(4096)
+});
+const adminBroadcastTestSchema = z.object({
+  text: z.string().trim().min(1).max(4096),
+  telegramId: z.coerce.number().int().positive()
+});
 const uploadPathSchema = z.object({
   prizeId: z.string().uuid()
 });
@@ -432,6 +439,30 @@ async function sendPrizeUsedByUserMessage(input: { userTelegramId: bigint; prize
   }
 }
 
+async function sendTelegramTextMessage(input: { chatId: string; text: string }) {
+  if (!botToken) {
+    throw app.httpErrors.internalServerError("BOT_TOKEN не настроен");
+  }
+  const telegramResponse = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: input.chatId,
+      text: input.text
+    })
+  });
+  const telegramData = (await telegramResponse.json()) as {
+    ok?: boolean;
+    description?: string;
+    result?: { message_id?: number };
+  };
+  return {
+    ok: Boolean(telegramResponse.ok && telegramData.ok),
+    description: telegramData.description ?? "",
+    messageId: telegramData.result?.message_id ?? null
+  };
+}
+
 async function expireActiveWins() {
   const now = new Date();
   const result = await prisma.win.updateMany({
@@ -736,6 +767,91 @@ app.patch("/admin/content/texts", async (request) => {
   ]);
 
   return { ok: true };
+});
+
+app.post("/admin/broadcast", async (request) => {
+  requireAdmin(request);
+  const parsed = adminBroadcastSchema.safeParse(request.body);
+  if (!parsed.success) {
+    throw app.httpErrors.badRequest("Некорректный текст рассылки");
+  }
+  if (!botToken) {
+    throw app.httpErrors.internalServerError("BOT_TOKEN не настроен");
+  }
+
+  const users = await prisma.user.findMany({
+    select: {
+      telegramId: true
+    },
+    orderBy: { createdAt: "asc" }
+  });
+
+  let successCount = 0;
+  let failedCount = 0;
+  const failedExamples: Array<{ telegramId: string; reason: string }> = [];
+  const batchSize = 25;
+  const pauseMs = 1100;
+
+  for (let index = 0; index < users.length; index += batchSize) {
+    const chunk = users.slice(index, index + batchSize);
+    for (const user of chunk) {
+      const result = await sendTelegramTextMessage({
+        chatId: user.telegramId.toString(),
+        text: parsed.data.text
+      });
+      if (result.ok) {
+        successCount += 1;
+      } else {
+        failedCount += 1;
+        if (failedExamples.length < 10) {
+          failedExamples.push({
+            telegramId: user.telegramId.toString(),
+            reason: result.description || "неизвестная ошибка"
+          });
+        }
+      }
+    }
+    if (index + batchSize < users.length) {
+      await new Promise<void>((resolve) => setTimeout(resolve, pauseMs));
+    }
+  }
+
+  return {
+    ok: true,
+    totalUsers: users.length,
+    successCount,
+    failedCount,
+    failedExamples
+  };
+});
+
+app.post("/admin/broadcast/test", async (request) => {
+  requireAdmin(request);
+  const parsed = adminBroadcastTestSchema.safeParse(request.body);
+  if (!parsed.success) {
+    throw app.httpErrors.badRequest("Некорректные данные тестовой рассылки");
+  }
+  if (!botToken) {
+    throw app.httpErrors.internalServerError("BOT_TOKEN не настроен");
+  }
+
+  const chatId = String(parsed.data.telegramId);
+  const result = await sendTelegramTextMessage({
+    chatId,
+    text: parsed.data.text
+  });
+
+  if (!result.ok) {
+    throw app.httpErrors.badGateway(
+      result.description || "Не удалось отправить тестовое сообщение"
+    );
+  }
+
+  return {
+    ok: true,
+    telegramId: chatId,
+    messageId: result.messageId
+  };
 });
 
 app.post("/auth/telegram", async (request) => {

@@ -2,6 +2,8 @@
 
 This is a shortcut on top of `DEPLOY_TIMEWEB.md`.
 
+**Обновление уже работающего сервера (git pull + build + prisma):** см. [`deploy/UPDATE_SERVER.md`](./UPDATE_SERVER.md).
+
 ## 1) Build app
 
 ```bash

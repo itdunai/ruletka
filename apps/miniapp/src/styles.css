@@ -814,6 +814,10 @@ body[data-tg-fullscreen="1"] .phdr {
   gap: 8px;
 }
 
+.adminBroadcastTestRow {
+  grid-template-columns: minmax(140px, 1fr) auto;
+}
+
 .adminGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
