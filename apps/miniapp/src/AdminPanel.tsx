@@ -31,6 +31,16 @@ const initialCreatePrize: CreatePrizePayload = {
   isActive: true
 };
 
+type BroadcastProgress = {
+  jobId: string;
+  status: "running" | "completed" | "failed";
+  totalUsers: number;
+  processedCount: number;
+  successCount: number;
+  failedCount: number;
+  error?: string | null;
+};
+
 export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
   const [token, setToken] = useState("");
   const [items, setItems] = useState<PrizeItem[]>([]);
@@ -46,6 +56,9 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
   const [prizeTerms, setPrizeTerms] = useState("");
   const [broadcastText, setBroadcastText] = useState("");
   const [broadcastTestRecipient, setBroadcastTestRecipient] = useState("");
+  const [userCount, setUserCount] = useState<number | null>(null);
+  const [broadcastSending, setBroadcastSending] = useState(false);
+  const [broadcastProgress, setBroadcastProgress] = useState<BroadcastProgress | null>(null);
 
   const headers = useMemo(
     () => ({
@@ -79,6 +92,12 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
       }
       setPromoTerms(textData.promoTerms ?? "");
       setPrizeTerms(textData.prizeTerms ?? "");
+      const statsResponse = await fetch(`${apiBaseUrl}/admin/stats`, { headers: { "x-admin-token": token } });
+      const statsData = (await statsResponse.json()) as { userCount?: number; message?: string };
+      if (!statsResponse.ok) {
+        throw new Error(statsData?.message ?? "Не удалось получить статистику");
+      }
+      setUserCount(statsData.userCount ?? 0);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Ошибка загрузки");
     } finally {
@@ -276,30 +295,46 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
     }
   }
 
+  async function pollBroadcastJob(jobId: string) {
+    while (true) {
+      const response = await fetch(`${apiBaseUrl}/admin/broadcast/${jobId}`, {
+        headers: { "x-admin-token": token }
+      });
+      const data = (await response.json()) as BroadcastProgress & { message?: string };
+      if (!response.ok) {
+        throw new Error(data?.message ?? "Не удалось получить статус рассылки");
+      }
+      setBroadcastProgress(data);
+      if (data.status === "completed" || data.status === "failed") {
+        return data;
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
+    }
+  }
+
   async function sendBroadcast() {
     if (!token || !broadcastText.trim()) return;
     if (!window.confirm("Отправить это сообщение всем пользователям Telegram?")) return;
-    setLoading(true);
+    setBroadcastSending(true);
     setError("");
     setSuccess("");
+    setBroadcastProgress(null);
     try {
       const response = await fetch(`${apiBaseUrl}/admin/broadcast`, {
         method: "POST",
         headers,
         body: JSON.stringify({ text: broadcastText.trim() })
       });
-      const data = (await response.json()) as {
-        message?: string;
-        totalUsers?: number;
-        successCount?: number;
-        failedCount?: number;
-      };
+      const data = (await response.json()) as BroadcastProgress & { message?: string };
       if (!response.ok) {
-        throw new Error(data?.message ?? "Не удалось выполнить рассылку");
+        throw new Error(data?.message ?? "Не удалось запустить рассылку");
       }
-      const summary = `Рассылка завершена: ${data.successCount ?? 0}/${data.totalUsers ?? 0} доставлено, ошибок: ${
-        data.failedCount ?? 0
-      }`;
+      setBroadcastProgress(data);
+      const finalState = await pollBroadcastJob(data.jobId);
+      if (finalState.status === "failed") {
+        throw new Error(finalState.error ?? "Рассылка завершилась с ошибкой");
+      }
+      const summary = `Рассылка завершена: ${finalState.successCount}/${finalState.totalUsers} доставлено, ошибок: ${finalState.failedCount}`;
       setSuccess(summary);
       setToast({ type: "success", text: summary });
     } catch (caught) {
@@ -307,7 +342,7 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
       setError(message);
       setToast({ type: "error", text: message });
     } finally {
-      setLoading(false);
+      setBroadcastSending(false);
     }
   }
 
@@ -327,6 +362,11 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
             {loading ? "Загрузка..." : "Загрузить призы"}
           </button>
         </div>
+        {userCount !== null ? (
+          <p className="adminStatLine">
+            Всего пользователей в базе: <strong>{userCount}</strong>
+          </p>
+        ) : null}
         {error ? <div className="adminError">{error}</div> : null}
         {success ? <div className="adminSuccess">{success}</div> : null}
       </section>
@@ -426,6 +466,11 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
 
       <section className="adminCard">
         <h2>Рассылка</h2>
+        {userCount !== null ? (
+          <p className="adminMuted adminBroadcastUsers">
+            Пользователей в базе: <strong>{userCount}</strong>
+          </p>
+        ) : null}
         <div className="adminForm">
           <label>
             Текст сообщения
@@ -450,13 +495,34 @@ export function AdminPanel({ apiBaseUrl }: AdminPanelProps) {
             <button
               type="button"
               onClick={sendBroadcastTest}
-              disabled={!token || loading || !broadcastText.trim() || !broadcastTestRecipient.trim()}
+              disabled={!token || broadcastSending || loading || !broadcastText.trim() || !broadcastTestRecipient.trim()}
             >
               {loading ? "Отправка..." : "Тест на 1 пользователя"}
             </button>
           </div>
-          <button onClick={sendBroadcast} disabled={!token || loading || !broadcastText.trim()}>
-            {loading ? "Отправка..." : "Отправить всем"}
+          {broadcastProgress ? (
+            <div className="adminBroadcastProgress">
+              <div className="adminBroadcastProgressMeta">
+                {broadcastProgress.status === "running" ? "Идёт рассылка…" : "Результат рассылки"}:{" "}
+                {broadcastProgress.processedCount} / {broadcastProgress.totalUsers} обработано, успешно:{" "}
+                {broadcastProgress.successCount}, ошибок: {broadcastProgress.failedCount}
+              </div>
+              <div className="adminProgressTrack" aria-hidden="true">
+                <div
+                  className="adminProgressFill"
+                  style={{
+                    width: `${
+                      broadcastProgress.totalUsers > 0
+                        ? Math.round((broadcastProgress.processedCount / broadcastProgress.totalUsers) * 100)
+                        : 0
+                    }%`
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
+          <button onClick={sendBroadcast} disabled={!token || broadcastSending || loading || !broadcastText.trim()}>
+            {broadcastSending ? "Рассылка..." : "Отправить всем"}
           </button>
         </div>
       </section>

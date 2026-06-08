@@ -757,6 +757,50 @@ body[data-tg-fullscreen="1"] .phdr {
   font-size: 13px;
 }
 
+.adminMuted strong,
+.adminStatLine strong {
+  color: var(--green);
+  font-weight: 700;
+}
+
+.adminStatLine {
+  margin-top: 8px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.adminBroadcastUsers {
+  margin-bottom: 10px;
+}
+
+.adminBroadcastProgress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.adminBroadcastProgressMeta {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.adminProgressTrack {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.adminProgressFill {
+  height: 100%;
+  background: linear-gradient(90deg, #8eb828 0%, #bfff00 100%);
+  border-radius: 999px;
+  transition: width 0.35s ease;
+}
+
 .adminTokenRow {
   display: flex;
   gap: 8px;

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import Fastify from "fastify";
@@ -439,6 +440,10 @@ async function sendPrizeUsedByUserMessage(input: { userTelegramId: bigint; prize
   }
 }
 
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
 async function sendTelegramTextMessage(input: { chatId: string; text: string }) {
   if (!botToken) {
     throw app.httpErrors.internalServerError("BOT_TOKEN не настроен");
@@ -455,12 +460,117 @@ async function sendTelegramTextMessage(input: { chatId: string; text: string }) 
     ok?: boolean;
     description?: string;
     result?: { message_id?: number };
+    parameters?: { retry_after?: number };
   };
   return {
     ok: Boolean(telegramResponse.ok && telegramData.ok),
     description: telegramData.description ?? "",
-    messageId: telegramData.result?.message_id ?? null
+    messageId: telegramData.result?.message_id ?? null,
+    retryAfterSec: telegramData.parameters?.retry_after ?? null
   };
+}
+
+async function sendTelegramTextMessageWithRetry(input: { chatId: string; text: string }) {
+  let result = await sendTelegramTextMessage(input);
+  if (result.ok) {
+    return result;
+  }
+
+  const isRateLimit =
+    result.description.toLowerCase().includes("too many requests") || result.retryAfterSec !== null;
+  if (!isRateLimit) {
+    return result;
+  }
+
+  const waitMs = Math.max((result.retryAfterSec ?? 3) * 1000, 3000);
+  await sleep(waitMs);
+  result = await sendTelegramTextMessage(input);
+  return result;
+}
+
+type BroadcastJobStatus = "running" | "completed" | "failed";
+
+type BroadcastJob = {
+  id: string;
+  status: BroadcastJobStatus;
+  totalUsers: number;
+  processedCount: number;
+  successCount: number;
+  failedCount: number;
+  failedExamples: Array<{ telegramId: string; reason: string }>;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+};
+
+const broadcastJobs = new Map<string, BroadcastJob>();
+
+function mapBroadcastJob(job: BroadcastJob) {
+  return {
+    jobId: job.id,
+    status: job.status,
+    totalUsers: job.totalUsers,
+    processedCount: job.processedCount,
+    successCount: job.successCount,
+    failedCount: job.failedCount,
+    failedExamples: job.failedExamples,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    error: job.error
+  };
+}
+
+async function runBroadcastJob(jobId: string, text: string, chatIds: string[]) {
+  const job = broadcastJobs.get(jobId);
+  if (!job) return;
+
+  const batchSize = 20;
+  const batchPauseMs = 1500;
+  const messagePauseMs = 80;
+
+  try {
+    for (let index = 0; index < chatIds.length; index += 1) {
+      const chatId = chatIds[index]!;
+      const result = await sendTelegramTextMessageWithRetry({ chatId, text });
+
+      if (result.ok) {
+        job.successCount += 1;
+      } else {
+        job.failedCount += 1;
+        if (job.failedExamples.length < 10) {
+          job.failedExamples.push({
+            telegramId: chatId,
+            reason: result.description || "неизвестная ошибка"
+          });
+        }
+      }
+      job.processedCount += 1;
+
+      const isBatchEnd = (index + 1) % batchSize === 0;
+      if (isBatchEnd && index + 1 < chatIds.length) {
+        await sleep(batchPauseMs);
+      } else if (index + 1 < chatIds.length) {
+        await sleep(messagePauseMs);
+      }
+    }
+
+    job.status = "completed";
+    job.finishedAt = new Date().toISOString();
+    app.log.info(
+      {
+        jobId,
+        totalUsers: job.totalUsers,
+        successCount: job.successCount,
+        failedCount: job.failedCount
+      },
+      "Broadcast job completed"
+    );
+  } catch (error) {
+    job.status = "failed";
+    job.finishedAt = new Date().toISOString();
+    job.error = error instanceof Error ? error.message : "неизвестная ошибка";
+    app.log.error({ err: error, jobId }, "Broadcast job failed");
+  }
 }
 
 async function expireActiveWins() {
@@ -769,6 +879,12 @@ app.patch("/admin/content/texts", async (request) => {
   return { ok: true };
 });
 
+app.get("/admin/stats", async (request) => {
+  requireAdmin(request);
+  const userCount = await prisma.user.count();
+  return { userCount };
+});
+
 app.post("/admin/broadcast", async (request) => {
   requireAdmin(request);
   const parsed = adminBroadcastSchema.safeParse(request.body);
@@ -779,6 +895,11 @@ app.post("/admin/broadcast", async (request) => {
     throw app.httpErrors.internalServerError("BOT_TOKEN не настроен");
   }
 
+  const runningJob = [...broadcastJobs.values()].find((job) => job.status === "running");
+  if (runningJob) {
+    throw app.httpErrors.conflict("Рассылка уже выполняется");
+  }
+
   const users = await prisma.user.findMany({
     select: {
       telegramId: true
@@ -786,43 +907,42 @@ app.post("/admin/broadcast", async (request) => {
     orderBy: { createdAt: "asc" }
   });
 
-  let successCount = 0;
-  let failedCount = 0;
-  const failedExamples: Array<{ telegramId: string; reason: string }> = [];
-  const batchSize = 25;
-  const pauseMs = 1100;
-
-  for (let index = 0; index < users.length; index += batchSize) {
-    const chunk = users.slice(index, index + batchSize);
-    for (const user of chunk) {
-      const result = await sendTelegramTextMessage({
-        chatId: user.telegramId.toString(),
-        text: parsed.data.text
-      });
-      if (result.ok) {
-        successCount += 1;
-      } else {
-        failedCount += 1;
-        if (failedExamples.length < 10) {
-          failedExamples.push({
-            telegramId: user.telegramId.toString(),
-            reason: result.description || "неизвестная ошибка"
-          });
-        }
-      }
-    }
-    if (index + batchSize < users.length) {
-      await new Promise<void>((resolve) => setTimeout(resolve, pauseMs));
-    }
+  if (users.length === 0) {
+    throw app.httpErrors.badRequest("В базе нет пользователей для рассылки");
   }
+
+  const jobId = crypto.randomUUID();
+  const job: BroadcastJob = {
+    id: jobId,
+    status: "running",
+    totalUsers: users.length,
+    processedCount: 0,
+    successCount: 0,
+    failedCount: 0,
+    failedExamples: [],
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    error: null
+  };
+  broadcastJobs.set(jobId, job);
+
+  const chatIds = users.map((user) => user.telegramId.toString());
+  void runBroadcastJob(jobId, parsed.data.text, chatIds);
 
   return {
     ok: true,
-    totalUsers: users.length,
-    successCount,
-    failedCount,
-    failedExamples
+    ...mapBroadcastJob(job)
   };
+});
+
+app.get("/admin/broadcast/:jobId", async (request) => {
+  requireAdmin(request);
+  const params = z.object({ jobId: z.string().uuid() }).parse(request.params);
+  const job = broadcastJobs.get(params.jobId);
+  if (!job) {
+    throw app.httpErrors.notFound("Задача рассылки не найдена");
+  }
+  return mapBroadcastJob(job);
 });
 
 async function resolveBroadcastTestRecipient(target: string) {
