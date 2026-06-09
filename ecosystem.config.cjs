@@ -2,7 +2,7 @@ const path = require("node:path");
 const dotenv = require("dotenv");
 
 const envPath = path.resolve(__dirname, ".env");
-const parsedEnv = dotenv.config({ path: envPath, override: true }).parsed ?? {};
+const parsedEnv = dotenv.config({ path: envPath }).parsed ?? {};
 
 module.exports = {
   apps: [

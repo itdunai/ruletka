@@ -80,11 +80,10 @@ npm run dev:miniapp
 
 Сделать UI-админку для призов и добавить отдельный cron-воркер для фоновой экспирации.
 
-## Deployment guide
+## Развёртывание
 
-Подробная инструкция по Timeweb и Telegram: `DEPLOY_TIMEWEB.md`.
+Полная инструкция: **[DEPLOY.md](./DEPLOY.md)** — локальная разработка, первичная установка на VPS, обновление, `.env`, команды `@ruletka/api` / `@ruletka/bot` / `@ruletka/miniapp`, Nginx, PM2, база данных.
 
-Готовые шаблоны для сервера:
-- `ecosystem.config.cjs` (PM2 процессы)
-- `deploy/nginx/ruletka.conf` (Nginx)
-- `deploy/DEPLOY_QUICKSTART.md` (быстрый запуск)
+Шаблоны:
+- `ecosystem.config.cjs` — PM2
+- `deploy/nginx/ruletka.conf` — Nginx
