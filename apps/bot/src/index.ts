@@ -8,8 +8,8 @@ import { Markup, Telegraf } from "telegraf";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const monorepoRoot = path.resolve(__dirname, "../../..");
 const rootEnvPath = path.join(monorepoRoot, ".env");
-void dotenv.config({ path: rootEnvPath });
-void dotenv.config();
+dotenv.config({ path: rootEnvPath, override: true });
+dotenv.config({ override: true });
 
 function readChannelLinksRaw(): string {
   const fromEnv = process.env.REQUIRED_CHANNELS_LINKS?.replace(/^\uFEFF/, "").trim();
@@ -80,6 +80,10 @@ if (requiredChannelLinkItems.length === 0 && fs.existsSync(fallbackLinksPath)) {
 }
 
 console.info(
+  "[ruletka-bot] REQUIRED_CHANNELS:",
+  requiredChannels.length > 0 ? requiredChannels.join(", ") : "(none — subscription check disabled)"
+);
+console.info(
   "[ruletka-bot] REQUIRED_CHANNELS_LINKS:",
   requiredChannelLinkItems.length > 0
     ? `${requiredChannelLinkItems.length} entries (titles with links)`
@@ -113,23 +117,55 @@ async function safeReply(ctx: Context, text: string, extra?: Parameters<Context[
   }
 }
 
-async function isSubscribedToAllRequiredChannels(telegramUserId: number): Promise<boolean> {
+type ChannelCheckResult = {
+  channelId: string;
+  ok: boolean;
+  status?: string;
+  error?: string;
+};
+
+async function checkRequiredChannelSubscriptions(telegramUserId: number): Promise<ChannelCheckResult[]> {
   if (requiredChannels.length === 0) {
-    return true;
+    return [];
   }
 
+  const results: ChannelCheckResult[] = [];
   for (const channelId of requiredChannels) {
     try {
       const member = await bot.telegram.getChatMember(channelId, telegramUserId);
       const allowedStatuses = new Set(["member", "administrator", "creator"]);
-      if (!allowedStatuses.has(member.status)) {
-        return false;
+      const ok = allowedStatuses.has(member.status);
+      results.push({ channelId, ok, status: member.status });
+      if (!ok) {
+        console.warn("[ruletka-bot] subscription not active", { channelId, telegramUserId, status: member.status });
       }
-    } catch {
-      return false;
+    } catch (error) {
+      const description = error instanceof Error ? error.message : String(error);
+      results.push({ channelId, ok: false, error: description });
+      console.warn("[ruletka-bot] subscription check error", { channelId, telegramUserId, description });
     }
   }
-  return true;
+  return results;
+}
+
+function isSubscribed(results: ChannelCheckResult[]) {
+  return results.length === 0 || results.every((result) => result.ok);
+}
+
+function formatSubscriptionIssuesHtml(results: ChannelCheckResult[]) {
+  const failed = results.filter((result) => !result.ok);
+  if (!failed.length) {
+    return "";
+  }
+
+  return failed
+    .map((result) => {
+      if (result.error) {
+        return `• <code>${escapeHtml(result.channelId)}</code>: ${escapeHtml(result.error)}`;
+      }
+      return `• <code>${escapeHtml(result.channelId)}</code>: статус <code>${escapeHtml(result.status ?? "unknown")}</code>`;
+    })
+    .join("\n");
 }
 
 function openMiniAppKeyboard() {
@@ -158,18 +194,22 @@ async function operatorWinAction(action: "claim" | "reject", winId: string, reas
 }
 
 bot.start(async (ctx) => {
-  const subscribed = await isSubscribedToAllRequiredChannels(ctx.from.id);
+  const subscriptionResults = await checkRequiredChannelSubscriptions(ctx.from.id);
 
-  if (!subscribed) {
+  if (!isSubscribed(subscriptionResults)) {
+    const issues = formatSubscriptionIssuesHtml(subscriptionResults);
     await safeReply(
       ctx,
       [
         "Перед запуском приложения нужно подписаться на каналы:",
         "",
         formatRequiredChannelsListHtml(),
+        issues ? ["", "Детали проверки:", issues].join("\n") : "",
         "",
         "После подписки нажмите /check"
-      ].join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n"),
       { parse_mode: "HTML", link_preview_options: { is_disabled: true } }
     );
     return;
@@ -179,15 +219,19 @@ bot.start(async (ctx) => {
 });
 
 bot.command("check", async (ctx) => {
-  const subscribed = await isSubscribedToAllRequiredChannels(ctx.from.id);
-  if (!subscribed) {
+  const subscriptionResults = await checkRequiredChannelSubscriptions(ctx.from.id);
+  if (!isSubscribed(subscriptionResults)) {
+    const issues = formatSubscriptionIssuesHtml(subscriptionResults);
     await safeReply(
       ctx,
       [
         "Подписка пока не подтверждена. Проверьте каналы и попробуйте снова.",
         "",
-        formatRequiredChannelsListHtml()
-      ].join("\n"),
+        formatRequiredChannelsListHtml(),
+        issues ? ["", "Детали проверки:", issues].join("\n") : ""
+      ]
+        .filter(Boolean)
+        .join("\n"),
       { parse_mode: "HTML", link_preview_options: { is_disabled: true } }
     );
     return;
