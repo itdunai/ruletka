@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Context } from "telegraf";
 import { Markup, Telegraf } from "telegraf";
+import { checkTelegramChannelSubscriptions, getRequiredChannels } from "./requiredChannels.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const monorepoRoot = path.resolve(__dirname, "../../..");
@@ -29,10 +30,6 @@ const token = process.env.BOT_TOKEN;
 const miniAppUrl = process.env.MINIAPP_URL ?? "https://example.com/miniapp";
 const apiBaseUrl = process.env.API_BASE_URL ?? "http://localhost:3001";
 const operatorToken = process.env.OPERATOR_TOKEN ?? "";
-const requiredChannels = (process.env.REQUIRED_CHANNELS ?? "")
-  .split(",")
-  .map((channel: string) => channel.trim())
-  .filter(Boolean);
 
 function escapeHtml(text: string) {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -79,6 +76,13 @@ if (requiredChannelLinkItems.length === 0 && fs.existsSync(fallbackLinksPath)) {
   }
 }
 
+{
+  const channels = getRequiredChannels();
+  console.info(
+    "[ruletka-bot] REQUIRED_CHANNELS:",
+    channels.length > 0 ? channels.join(", ") : "(none — subscription check disabled)"
+  );
+}
 console.info(
   "[ruletka-bot] REQUIRED_CHANNELS_LINKS:",
   requiredChannelLinkItems.length > 0
@@ -92,8 +96,9 @@ function formatRequiredChannelsListHtml(): string {
       .map((item) => `• <a href="${escapeAttr(item.url)}">${escapeHtml(item.title)}</a>`)
       .join("\n");
   }
-  if (requiredChannels.length > 0) {
-    return requiredChannels.map((id) => `• <code>${escapeHtml(id)}</code>`).join("\n");
+  const channels = getRequiredChannels();
+  if (channels.length > 0) {
+    return channels.map((id) => `• <code>${escapeHtml(id)}</code>`).join("\n");
   }
   return "• @your_channel";
 }
@@ -114,22 +119,10 @@ async function safeReply(ctx: Context, text: string, extra?: Parameters<Context[
 }
 
 async function isSubscribedToAllRequiredChannels(telegramUserId: number): Promise<boolean> {
-  if (requiredChannels.length === 0) {
-    return true;
+  if (!token) {
+    return false;
   }
-
-  for (const channelId of requiredChannels) {
-    try {
-      const member = await bot.telegram.getChatMember(channelId, telegramUserId);
-      const allowedStatuses = new Set(["member", "administrator", "creator"]);
-      if (!allowedStatuses.has(member.status)) {
-        return false;
-      }
-    } catch {
-      return false;
-    }
-  }
-  return true;
+  return checkTelegramChannelSubscriptions(token, telegramUserId, getRequiredChannels());
 }
 
 function openMiniAppKeyboard() {

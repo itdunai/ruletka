@@ -1,7 +1,13 @@
-import "dotenv/config";
+import dotenv from "dotenv";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const monorepoRoot = path.resolve(__dirname, "../../..");
+void dotenv.config({ path: path.join(monorepoRoot, ".env") });
+void dotenv.config();
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
@@ -15,6 +21,11 @@ import { fileTypeFromBuffer } from "file-type";
 import { getDefaultPrizesWithoutId, pickWeightedPrize, type Prize } from "./prizes.js";
 import { prisma } from "./db.js";
 import { validateTelegramInitData } from "./telegram.js";
+import {
+  checkTelegramChannelSubscriptions,
+  getRequiredChannels,
+  type SubscriptionCheckResult
+} from "./requiredChannels.js";
 
 const SPIN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const WIN_EXPIRATION_MS = 3 * 24 * 60 * 60 * 1000;
@@ -26,10 +37,6 @@ const adminToken = process.env.ADMIN_TOKEN ?? "";
 const operatorToken = process.env.OPERATOR_TOKEN ?? "";
 const shopChatId = process.env.SHOP_CHAT_ID ?? "";
 const botToken = process.env.BOT_TOKEN ?? process.env.TELEGRAM_BOT_TOKEN ?? "";
-const requiredChannels = (process.env.REQUIRED_CHANNELS ?? "")
-  .split(",")
-  .map((channel) => channel.trim())
-  .filter(Boolean);
 const corsOrigins = (process.env.CORS_ORIGINS ?? "")
   .split(",")
   .map((origin) => origin.trim())
@@ -644,47 +651,34 @@ async function notifyUsersSpinReady() {
   }
 }
 
-type SubscriptionCheckResult =
-  | { ok: true }
-  | { ok: false; reason: "not_subscribed" }
-  | { ok: false; reason: "check_failed"; channel: string; description?: string };
-
 async function checkRequiredChannelSubscriptions(telegramId: number): Promise<SubscriptionCheckResult> {
-  if (requiredChannels.length === 0) {
-    return { ok: true };
-  }
   if (!botToken) {
     throw app.httpErrors.internalServerError("Для проверки подписок нужен BOT_TOKEN");
   }
-
-  for (const channel of requiredChannels) {
-    const response = await fetch(`https://api.telegram.org/bot${botToken}/getChatMember`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: channel,
-        user_id: telegramId
-      })
-    });
-
-    const data = (await response.json()) as {
-      ok?: boolean;
-      description?: string;
-      result?: { status?: string };
-    };
-
-    if (!response.ok || !data.ok) {
-      app.log.warn({ channel, description: data.description }, "Failed to check channel membership");
-      return { ok: false, reason: "check_failed", channel, description: data.description };
-    }
-
-    const status = data.result?.status;
-    const allowed = new Set(["member", "administrator", "creator"]);
-    if (!status || !allowed.has(status)) {
-      return { ok: false, reason: "not_subscribed" };
-    }
+  const channels = getRequiredChannels();
+  const result = await checkTelegramChannelSubscriptions(botToken, telegramId, channels);
+  if (!result.ok) {
+    app.log.warn(
+      {
+        telegramId,
+        channels,
+        reason: result.reason,
+        channel: "channel" in result ? result.channel : undefined,
+        status: "status" in result ? result.status : undefined,
+        description: "description" in result ? result.description : undefined
+      },
+      "Subscription check failed"
+    );
   }
-  return { ok: true };
+  return result;
+}
+
+{
+  const channels = getRequiredChannels();
+  console.info(
+    "[ruletka-api] REQUIRED_CHANNELS:",
+    channels.length > 0 ? channels.join(", ") : "(none — subscription check disabled)"
+  );
 }
 
 function mapPrizeToApi(prize: {
@@ -1117,9 +1111,9 @@ app.get("/app/state", async (request) => {
       where: { isActive: true },
       orderBy: { createdAt: "asc" }
     }),
-    isDemoUser(auth.telegramId)
+    isDemoUser(Number(user.telegramId))
       ? Promise.resolve({ ok: true as const })
-      : checkRequiredChannelSubscriptions(auth.telegramId)
+      : checkRequiredChannelSubscriptions(Number(user.telegramId))
   ]);
 
   const isSubscribed = subscriptionCheck.ok
@@ -1128,14 +1122,12 @@ app.get("/app/state", async (request) => {
       ? false
       : undefined;
   const cooldownReady = canSpin(lastSpin?.spinAt ?? null);
-  const canSpinNow = isDemoUser(auth.telegramId)
-    ? true
-    : cooldownReady && (isSubscribed !== false);
+  const canSpinNow = isDemoUser(Number(user.telegramId)) ? true : cooldownReady;
 
   return {
     canSpin: canSpinNow,
     isSubscribed,
-    nextSpinAt: isDemoUser(auth.telegramId) ? null : getNextSpinAt(lastSpin?.spinAt ?? null),
+    nextSpinAt: isDemoUser(Number(user.telegramId)) ? null : getNextSpinAt(lastSpin?.spinAt ?? null),
     wins: wins.map((win) => ({
       id: win.id,
       prizeId: win.prizeId,
@@ -1164,8 +1156,8 @@ app.post("/spin", async (request) => {
   if (!user) {
     throw app.httpErrors.notFound("Пользователь не найден");
   }
-  if (!isDemoUser(auth.telegramId)) {
-    const subscriptionCheck = await checkRequiredChannelSubscriptions(auth.telegramId);
+  if (!isDemoUser(Number(user.telegramId))) {
+    const subscriptionCheck = await checkRequiredChannelSubscriptions(Number(user.telegramId));
     if (!subscriptionCheck.ok && subscriptionCheck.reason === "check_failed") {
       throw app.httpErrors.serviceUnavailable("Не удалось проверить подписку на каналы");
     }

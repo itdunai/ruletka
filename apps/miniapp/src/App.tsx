@@ -391,6 +391,17 @@ export function App() {
   }, [accessToken]);
 
   useEffect(() => {
+    if (!accessToken || screen !== "main") return;
+    const refresh = () => {
+      if (document.visibilityState === "visible") {
+        void fetchState();
+      }
+    };
+    document.addEventListener("visibilitychange", refresh);
+    return () => document.removeEventListener("visibilitychange", refresh);
+  }, [accessToken, screen]);
+
+  useEffect(() => {
     if (!isFullscreen) return;
     const backButton = window.Telegram?.WebApp?.BackButton;
     if (!backButton?.show || !backButton.hide) return;
@@ -598,7 +609,6 @@ export function App() {
 
   function spinButtonLabel() {
     if (loading || spinning) return "Крутим...";
-    if (appState?.isSubscribed === false) return "Нужна подписка";
     if (appState?.canSpin) return "Крутить";
     return "Уже крутили";
   }
@@ -753,6 +763,11 @@ export function App() {
                   {spinButtonLabel()}
                 </button>
               </div>
+              {appState?.isSubscribed === false ? (
+                <div className="errorNote">
+                  Подписка не подтверждена в приложении. Если вы уже подписаны — откройте бота, нажмите /check и снова откройте колесо.
+                </div>
+              ) : null}
               {error ? <div className="errorNote">{error}</div> : null}
             </div>
             <div className="tnote">
