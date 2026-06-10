@@ -644,9 +644,14 @@ async function notifyUsersSpinReady() {
   }
 }
 
-async function isUserSubscribedToRequiredChannels(telegramId: number): Promise<boolean> {
+type SubscriptionCheckResult =
+  | { ok: true }
+  | { ok: false; reason: "not_subscribed" }
+  | { ok: false; reason: "check_failed"; channel: string; description?: string };
+
+async function checkRequiredChannelSubscriptions(telegramId: number): Promise<SubscriptionCheckResult> {
   if (requiredChannels.length === 0) {
-    return true;
+    return { ok: true };
   }
   if (!botToken) {
     throw app.httpErrors.internalServerError("Для проверки подписок нужен BOT_TOKEN");
@@ -670,16 +675,16 @@ async function isUserSubscribedToRequiredChannels(telegramId: number): Promise<b
 
     if (!response.ok || !data.ok) {
       app.log.warn({ channel, description: data.description }, "Failed to check channel membership");
-      return false;
+      return { ok: false, reason: "check_failed", channel, description: data.description };
     }
 
     const status = data.result?.status;
     const allowed = new Set(["member", "administrator", "creator"]);
     if (!status || !allowed.has(status)) {
-      return false;
+      return { ok: false, reason: "not_subscribed" };
     }
   }
-  return true;
+  return { ok: true };
 }
 
 function mapPrizeToApi(prize: {
@@ -1095,7 +1100,7 @@ app.get("/app/state", async (request) => {
     data: { status: WinStatus.expired }
   });
 
-  const [lastSpin, wins, prizes] = await Promise.all([
+  const [lastSpin, wins, prizes, subscriptionCheck] = await Promise.all([
     prisma.spin.findFirst({
       where: { userId: user.id },
       orderBy: { spinAt: "desc" }
@@ -1111,11 +1116,25 @@ app.get("/app/state", async (request) => {
     prisma.prize.findMany({
       where: { isActive: true },
       orderBy: { createdAt: "asc" }
-    })
+    }),
+    isDemoUser(auth.telegramId)
+      ? Promise.resolve({ ok: true as const })
+      : checkRequiredChannelSubscriptions(auth.telegramId)
   ]);
 
+  const isSubscribed = subscriptionCheck.ok
+    ? true
+    : subscriptionCheck.reason === "not_subscribed"
+      ? false
+      : undefined;
+  const cooldownReady = canSpin(lastSpin?.spinAt ?? null);
+  const canSpinNow = isDemoUser(auth.telegramId)
+    ? true
+    : cooldownReady && (isSubscribed !== false);
+
   return {
-    canSpin: isDemoUser(auth.telegramId) ? true : canSpin(lastSpin?.spinAt ?? null),
+    canSpin: canSpinNow,
+    isSubscribed,
     nextSpinAt: isDemoUser(auth.telegramId) ? null : getNextSpinAt(lastSpin?.spinAt ?? null),
     wins: wins.map((win) => ({
       id: win.id,
@@ -1146,8 +1165,11 @@ app.post("/spin", async (request) => {
     throw app.httpErrors.notFound("Пользователь не найден");
   }
   if (!isDemoUser(auth.telegramId)) {
-    const isSubscribed = await isUserSubscribedToRequiredChannels(auth.telegramId);
-    if (!isSubscribed) {
+    const subscriptionCheck = await checkRequiredChannelSubscriptions(auth.telegramId);
+    if (!subscriptionCheck.ok && subscriptionCheck.reason === "check_failed") {
+      throw app.httpErrors.serviceUnavailable("Не удалось проверить подписку на каналы");
+    }
+    if (!subscriptionCheck.ok) {
       throw app.httpErrors.forbidden("Нет подписки на обязательные каналы");
     }
   }
@@ -1182,7 +1204,16 @@ app.post("/spin", async (request) => {
     isActive: prize.isActive
   }));
 
-  const prize = pickWeightedPrize(prizesForPick);
+  if (prizesForPick.length === 0) {
+    throw app.httpErrors.badRequest("Нет доступных призов. Попробуйте позже.");
+  }
+
+  let prize: Prize;
+  try {
+    prize = pickWeightedPrize(prizesForPick);
+  } catch {
+    throw app.httpErrors.badRequest("Нет доступных призов. Попробуйте позже.");
+  }
   const expiresAt = new Date(now.getTime() + WIN_EXPIRATION_MS);
 
   const spin = await prisma.spin.create({

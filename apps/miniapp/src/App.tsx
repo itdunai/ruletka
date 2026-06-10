@@ -18,6 +18,7 @@ type SpinResponse = {
 
 type AppStateResponse = {
   canSpin: boolean;
+  isSubscribed?: boolean;
   nextSpinAt: string | null;
   prizesPreview: Array<{
     id: string;
@@ -76,6 +77,7 @@ declare global {
         platform?: string;
         viewportHeight?: number;
         viewportStableHeight?: number;
+        showAlert?: (message: string, callback?: () => void) => void;
         BackButton?: {
           show?: () => void;
           hide?: () => void;
@@ -179,7 +181,29 @@ export function App() {
   const slotOuterRef = useRef<HTMLDivElement | null>(null);
   const idleRunIdRef = useRef(0);
   const spinningRef = useRef(false);
+  const loadingRef = useRef(false);
+  const offsetRef = useRef(0);
   const [viewportCenter, setViewportCenter] = useState(225);
+
+  const wheelBusy = loading || spinning;
+
+  function stopIdleAnimation() {
+    idleRunIdRef.current += 1;
+  }
+
+  function applyOffset(value: number) {
+    offsetRef.current = value;
+    setOffset(value);
+  }
+
+  function showUserError(message: string) {
+    setError(message);
+    try {
+      window.Telegram?.WebApp?.showAlert?.(message);
+    } catch {
+      // Older Telegram clients may not support showAlert.
+    }
+  }
 
   const displayName = username ? `@${username}` : firstName || "Пользователь";
   const prizePool = appState?.prizesPreview?.length ? appState.prizesPreview : [];
@@ -428,12 +452,21 @@ export function App() {
   }, [screen]);
 
   useEffect(() => {
+    offsetRef.current = offset;
     if (!trackRef.current) return;
     trackRef.current.style.transform = `translateX(${-offset}px)`;
   }, [offset]);
 
   useEffect(() => {
-    if (!prizePool.length || spinning) return;
+    loadingRef.current = loading;
+  }, [loading]);
+
+  useEffect(() => {
+    spinningRef.current = spinning;
+  }, [spinning]);
+
+  useEffect(() => {
+    if (!prizePool.length || wheelBusy) return;
     setOffset((prev) => {
       let bestOffset = cardOffset(prizePool.length * 2);
       let bestDistance = Infinity;
@@ -448,19 +481,16 @@ export function App() {
       }
       return bestOffset;
     });
-  }, [viewportCenter, prizePool.length, spinning]);
+  }, [viewportCenter, prizePool.length, wheelBusy]);
 
   useEffect(() => {
-    spinningRef.current = spinning;
-  }, [spinning]);
-
-  useEffect(() => {
-    if (!prizePool.length || screen !== "main" || spinning) return;
+    if (!prizePool.length || screen !== "main" || wheelBusy) return;
 
     const poolLen = prizePool.length;
     const bandStart = poolLen * 2;
     const runId = ++idleRunIdRef.current;
-    const cancelled = () => idleRunIdRef.current !== runId || spinningRef.current || screen !== "main";
+    const cancelled = () =>
+      idleRunIdRef.current !== runId || spinningRef.current || loadingRef.current || screen !== "main";
 
     const sleep = (ms: number) =>
       new Promise<void>((resolve) => {
@@ -474,7 +504,7 @@ export function App() {
           return;
         }
         if (duration <= 0) {
-          setOffset(to);
+          applyOffset(to);
           resolve();
           return;
         }
@@ -487,7 +517,7 @@ export function App() {
           if (!startTs) startTs = ts;
           const t = Math.min((ts - startTs) / duration, 1);
           const eased = 1 - (1 - t) * (1 - t);
-          setOffset(from + (to - from) * eased);
+          applyOffset(from + (to - from) * eased);
           if (t < 1) {
             requestAnimationFrame(frame);
             return;
@@ -507,7 +537,7 @@ export function App() {
         const nextOffset = cardOffset(nextGlobalIndex);
         const nudgeOffset = baseOffset - STEP * 0.05;
 
-        setOffset(baseOffset);
+        applyOffset(baseOffset);
         await sleep(1000);
         if (cancelled()) break;
 
@@ -529,18 +559,18 @@ export function App() {
     return () => {
       idleRunIdRef.current += 1;
     };
-  }, [prizePool.length, screen, spinning, viewportCenter]);
+  }, [prizePool.length, screen, wheelBusy, viewportCenter]);
 
   function animateSpinToPrize(prizeId: string) {
     if (!prizePool.length) return Promise.resolve();
-    idleRunIdRef.current += 1;
+    stopIdleAnimation();
     setSpinning(true);
     spinningRef.current = true;
 
     const prizeIndex = Math.max(0, prizePool.findIndex((prize) => prize.id === prizeId));
     const rounds = 7;
     const targetGlobalIndex = rounds * prizePool.length + prizeIndex;
-    const startOffset = offset;
+    const startOffset = offsetRef.current;
     const targetOffset = cardOffset(targetGlobalIndex);
     const fullStep = prizePool.length * STEP;
     const distance = targetOffset - startOffset + fullStep * Math.ceil((startOffset - targetOffset + fullStep * rounds) / fullStep);
@@ -552,12 +582,12 @@ export function App() {
         if (!startTs) startTs = ts;
         const t = Math.min((ts - startTs) / duration, 1);
         const eased = t < 0.2 ? (t / 0.2) * 0.5 : 0.5 + (1 - Math.pow(1 - (t - 0.2) / 0.8, 3)) * 0.5;
-        setOffset(startOffset + distance * eased);
+        applyOffset(startOffset + distance * eased);
         if (t < 1) {
           requestAnimationFrame(frame);
           return;
         }
-        setOffset(startOffset + distance);
+        applyOffset(startOffset + distance);
         setSpinning(false);
         spinningRef.current = false;
         resolve();
@@ -566,8 +596,17 @@ export function App() {
     });
   }
 
+  function spinButtonLabel() {
+    if (loading || spinning) return "Крутим...";
+    if (appState?.isSubscribed === false) return "Нужна подписка";
+    if (appState?.canSpin) return "Крутить";
+    return "Уже крутили";
+  }
+
   async function spinOnce() {
+    if (loading || spinning || !appState?.canSpin) return;
     setError("");
+    stopIdleAnimation();
     setLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/spin`, {
@@ -578,18 +617,24 @@ export function App() {
         },
         body: JSON.stringify({})
       });
-      const data = await response.json();
+      const data = (await response.json().catch(() => ({}))) as SpinResponse & { message?: string };
       if (!response.ok) {
-        throw new Error(data?.message ?? "Не удалось выполнить спин");
+        let message = data?.message ?? "Не удалось выполнить спин";
+        if (response.status === 403) {
+          message = `${message} Откройте бота и нажмите /check после подписки на каналы.`;
+        } else if (response.status === 503) {
+          message = `${message} Попробуйте ещё раз через минуту.`;
+        }
+        throw new Error(message);
       }
       const result = data as SpinResponse;
       await animateSpinToPrize(result.prize.id);
       setSpinResult(result);
-      await fetchState();
       setScreen("result");
+      void fetchState();
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Ошибка запроса";
-      setError(message);
+      showUserError(message);
     } finally {
       setLoading(false);
     }
@@ -705,7 +750,7 @@ export function App() {
                   disabled={loading || stateLoading || spinning || !appState?.canSpin}
                   onClick={spinOnce}
                 >
-                  {loading || spinning ? "Крутим..." : appState?.canSpin ? "Крутить" : "Уже крутили"}
+                  {spinButtonLabel()}
                 </button>
               </div>
               {error ? <div className="errorNote">{error}</div> : null}
