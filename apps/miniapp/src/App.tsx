@@ -175,7 +175,7 @@ export function App() {
   const [username, setUsername] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [error, setError] = useState<string>("");
+  const [modal, setModal] = useState<AppModal | null>(null);
   const [offset, setOffset] = useState(0);
   const [spinning, setSpinning] = useState(false);
   const [accessToken, setAccessToken] = useState("");
@@ -187,8 +187,6 @@ export function App() {
     prizeTerms:
       "<h3>Как получить</h3><ul><li>Отправьте приз оператору до заказа</li><li>Срок действия: 3 дня</li><li>Только для владельца аккаунта</li></ul>"
   });
-  const [modal, setModal] = useState<AppModal | null>(null);
-
   const trackRef = useRef<HTMLDivElement | null>(null);
   const slotOuterRef = useRef<HTMLDivElement | null>(null);
   const idleRunIdRef = useRef(0);
@@ -208,9 +206,12 @@ export function App() {
     setOffset(value);
   }
 
-  function openModal(title: string, message: string) {
-    setError("");
+  function notifyUser(title: string, message: string) {
     setModal({ title, message });
+  }
+
+  function openModal(title: string, message: string) {
+    notifyUser(title, message);
   }
 
   function closeModal() {
@@ -312,7 +313,7 @@ export function App() {
       }
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Ошибка загрузки состояния";
-      setError(message);
+      notifyUser("Ошибка", message);
     } finally {
       setStateLoading(false);
     }
@@ -397,9 +398,11 @@ export function App() {
     if (!authReady) return;
 
     async function authAndLoad() {
-      setError("");
       if (!initData && !telegramId) {
-        setError("Не удалось получить данные Telegram. Откройте mini app через кнопку бота и обновите экран.");
+        notifyUser(
+          "Нет данных Telegram",
+          "Откройте колесо через кнопку в боте и попробуйте снова."
+        );
         return;
       }
       const response = await fetch(`${API_BASE_URL}/auth/telegram`, {
@@ -426,7 +429,7 @@ export function App() {
 
     authAndLoad().catch((caught) => {
       const message = caught instanceof Error ? caught.message : "Ошибка авторизации";
-      setError(message);
+      notifyUser("Ошибка авторизации", message);
     });
   }, [authReady, telegramId, username, firstName, lastName, initData]);
 
@@ -660,7 +663,6 @@ export function App() {
 
   async function spinOnce() {
     if (loading || spinning || !appState?.canSpin) return;
-    setError("");
     stopIdleAnimation();
     setLoading(true);
     try {
@@ -691,7 +693,6 @@ export function App() {
   }
 
   async function resendWinReminder(winId: string) {
-    setError("");
     setLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/wins/${winId}/send-to-shop`, {
@@ -709,14 +710,13 @@ export function App() {
       alert("Сообщение с призом отправлено в чат с ботом.");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Ошибка отправки";
-      setError(message);
+      notifyUser("Ошибка", message);
     } finally {
       setLoading(false);
     }
   }
 
   async function markOrderReceived(winId: string) {
-    setError("");
     setLoading(true);
     try {
       const response = await fetch(`${API_BASE_URL}/wins/${winId}/order-received`, {
@@ -734,7 +734,7 @@ export function App() {
       await fetchState();
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Ошибка запроса";
-      setError(message);
+      notifyUser("Ошибка", message);
     } finally {
       setLoading(false);
     }
@@ -803,7 +803,6 @@ export function App() {
                   {spinButtonLabel()}
                 </button>
               </div>
-              {error ? <div className="errorNote">{error}</div> : null}
             </div>
             <div className="tnote">
               Нажимая на кнопку, вы соглашаетесь с{" "}
