@@ -26,6 +26,7 @@ import {
   getRequiredChannels,
   type SubscriptionCheckResult
 } from "./requiredChannels.js";
+import { sendSubscriptionReminderToUser } from "./subscriptionReminder.js";
 
 const SPIN_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const WIN_EXPIRATION_MS = 3 * 24 * 60 * 60 * 1000;
@@ -1149,7 +1150,7 @@ app.get("/app/state", async (request) => {
   };
 });
 
-app.post("/spin", async (request) => {
+app.post("/spin", async (request, reply) => {
   const auth = requireUser(request);
   await ensureDefaultPrizes();
   const user = await prisma.user.findUnique({ where: { id: auth.userId } });
@@ -1158,11 +1159,27 @@ app.post("/spin", async (request) => {
   }
   if (!isDemoUser(Number(user.telegramId))) {
     const subscriptionCheck = await checkRequiredChannelSubscriptions(Number(user.telegramId));
-    if (!subscriptionCheck.ok && subscriptionCheck.reason === "check_failed") {
-      throw app.httpErrors.serviceUnavailable("Не удалось проверить подписку на каналы");
-    }
     if (!subscriptionCheck.ok) {
-      throw app.httpErrors.forbidden("Нет подписки на обязательные каналы");
+      if (subscriptionCheck.reason === "not_subscribed") {
+        void sendSubscriptionReminderToUser({
+          userId: user.id,
+          userTelegramId: user.telegramId,
+          botToken
+        })
+          .then((result) => {
+            if (result.sent) {
+              app.log.info({ userId: user.id }, "Subscription reminder sent to user chat");
+            }
+          })
+          .catch((error) => {
+            app.log.warn({ err: error, userId: user.id }, "Failed to send subscription reminder");
+          });
+        return reply.code(403).send({
+          message: "Для крутки колеса нужна подписка на каналы магазина.",
+          code: "subscription_required"
+        });
+      }
+      throw app.httpErrors.serviceUnavailable("Не удалось проверить подписку на каналы");
     }
   }
   const now = new Date();

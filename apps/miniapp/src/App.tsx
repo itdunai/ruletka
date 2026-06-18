@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AdminPanel } from "./AdminPanel";
+import { Modal } from "./Modal";
 
 type SpinResponse = {
   winId: string;
@@ -41,6 +42,16 @@ type ContentTexts = {
   promoTerms: string;
   prizeTerms: string;
 };
+type AppModal = {
+  title: string;
+  message: string;
+};
+
+type SpinErrorResponse = {
+  message?: string;
+  code?: string;
+};
+
 type AuthResponse = {
   accessToken: string;
   user: {
@@ -176,6 +187,7 @@ export function App() {
     prizeTerms:
       "<h3>Как получить</h3><ul><li>Отправьте приз оператору до заказа</li><li>Срок действия: 3 дня</li><li>Только для владельца аккаунта</li></ul>"
   });
+  const [modal, setModal] = useState<AppModal | null>(null);
 
   const trackRef = useRef<HTMLDivElement | null>(null);
   const slotOuterRef = useRef<HTMLDivElement | null>(null);
@@ -196,13 +208,46 @@ export function App() {
     setOffset(value);
   }
 
-  function showUserError(message: string) {
-    setError(message);
-    try {
-      window.Telegram?.WebApp?.showAlert?.(message);
-    } catch {
-      // Older Telegram clients may not support showAlert.
+  function openModal(title: string, message: string) {
+    setError("");
+    setModal({ title, message });
+  }
+
+  function closeModal() {
+    setModal(null);
+  }
+
+  function showSpinError(response: Response, data: SpinErrorResponse) {
+    if (response.status === 403 || data.code === "subscription_required") {
+      openModal(
+        "Нужна подписка",
+        [
+          "Чтобы крутить колесо, подпишитесь на все каналы магазина.",
+          "",
+          "1. Подпишитесь на каналы из списка",
+          "2. Откройте чат с ботом и нажмите /check",
+          "3. Снова откройте колесо и нажмите «Крутить»",
+          "",
+          "Подробная инструкция с ссылками на каналы отправлена вам в чат с ботом."
+        ].join("\n")
+      );
+      return;
     }
+
+    if (response.status === 429) {
+      openModal("Уже крутили", data.message ?? "Крутить можно только один раз в неделю. Дождитесь следующей попытки.");
+      return;
+    }
+
+    if (response.status === 503) {
+      openModal(
+        "Не удалось проверить подписку",
+        `${data.message ?? "Сервис временно недоступен."}\n\nПопробуйте ещё раз через минуту.`
+      );
+      return;
+    }
+
+    openModal("Не удалось крутить", data.message ?? "Попробуйте ещё раз чуть позже.");
   }
 
   const displayName = username ? `@${username}` : firstName || "Пользователь";
@@ -627,15 +672,10 @@ export function App() {
         },
         body: JSON.stringify({})
       });
-      const data = (await response.json().catch(() => ({}))) as SpinResponse & { message?: string };
+      const data = (await response.json().catch(() => ({}))) as SpinResponse & SpinErrorResponse;
       if (!response.ok) {
-        let message = data?.message ?? "Не удалось выполнить спин";
-        if (response.status === 403) {
-          message = `${message} Откройте бота и нажмите /check после подписки на каналы.`;
-        } else if (response.status === 503) {
-          message = `${message} Попробуйте ещё раз через минуту.`;
-        }
-        throw new Error(message);
+        showSpinError(response, data);
+        return;
       }
       const result = data as SpinResponse;
       await animateSpinToPrize(result.prize.id);
@@ -644,7 +684,7 @@ export function App() {
       void fetchState();
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "Ошибка запроса";
-      showUserError(message);
+      openModal("Ошибка", message);
     } finally {
       setLoading(false);
     }
@@ -763,11 +803,6 @@ export function App() {
                   {spinButtonLabel()}
                 </button>
               </div>
-              {appState?.isSubscribed === false ? (
-                <div className="errorNote">
-                  Подписка не подтверждена в приложении. Если вы уже подписаны — откройте бота, нажмите /check и снова откройте колесо.
-                </div>
-              ) : null}
               {error ? <div className="errorNote">{error}</div> : null}
             </div>
             <div className="tnote">
@@ -908,6 +943,7 @@ export function App() {
           </div>
         )}
       </div>
+      {modal ? <Modal title={modal.title} message={modal.message} onClose={closeModal} /> : null}
     </main>
   );
 }
